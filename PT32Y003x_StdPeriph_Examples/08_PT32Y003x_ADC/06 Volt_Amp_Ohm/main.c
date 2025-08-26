@@ -590,8 +590,9 @@ void LCDInit(void)
     
     HT1621_Init();
 	// TODO: 测试LCD屏
-    // uint8_t seg_data[] = {DISPLAY_HALF_BAT};  // 示例数据
-    // HT1621_WriteData(HALF_BAT_ADDR, seg_data, 1);
+    uint8_t seg_data[] = {0x5};  // 示例数据
+
+    HT1621_WriteData(FIRST_R_ADDR, seg_data, 1);
     // , DISPLAY_HZ, DISPLAY_MOhm
 	// HT1621_WriteData(HALF_BAT_ADDR, DISPLAY_HALF_BAT, 1);
 	// HT1621_WriteData(HALF_BAT_ADDR, DISPLAY_HZ, 1);
@@ -1091,10 +1092,10 @@ int main (void)
     LCDInit();
     while (1)
     {
-        uint8_t ff[16]; for (int i=0;i<16;i++) ff[i]=0xFF;
-        HT1621_WriteData(0x00, ff, 16);
-        delay_ms(2000);
-        HT1621_Clear();
+        // uint8_t ff[16]; for (int i=0;i<16;i++) ff[i]=0xFF;
+        // HT1621_WriteData(0x00, ff, 16);
+        // delay_ms(2000);
+        // HT1621_Clear();
         delay_ms(2000);
     }
     

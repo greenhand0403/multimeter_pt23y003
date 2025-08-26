@@ -7,23 +7,25 @@
 #include "PT32Y003x_gpio.h"
 #include "delay.h"
 
-#define HALF_BAT_ADDR           0x09
-#define FULL_BAT_ADDR           0x0A
-#define AMP_ADDR                0x0B
-#define MILLI_AMP_ADDR          0x0C
-#define COLON_ADDR              0x0D
-#define FOURTH_8_ADDR           0x0E
-#define RIGHT_POINT_ADDR        0x0F
-#define THIRD_8_ADDR            0X10
-#define MIDDLE_POINT_ADDR       0x11
-#define SECOND_8_ADDR           0x12
-#define LEFT_POINT_ADDR         0x13
-#define FIRST_8_ADDR            0x14
+#define HALF_BAT_ADDR           0x14
+#define FULL_BAT_ADDR           0x13
+#define AMP_ADDR                0x12
+#define MILLI_AMP_ADDR          0x11
+#define FOURTH_R_ADDR           0x10
+#define FOURTH_L_ADDR           0x0F
+#define THIRD_R_ADDR            0x0E
+#define THIRD_L_ADDR            0X0D
+#define SECOND_R_ADDR           0x0C
+#define SECOND_L_ADDR           0x0B
+#define FIRST_R_ADDR            0x0A
+#define FIRST_L_ADDR            0x09
 
 #define DISPLAY_ALARM           0x04
+
 #define DISPLAY_MOhm            0x01
-#define DISPLAY_HALF_BAT        0x08
 #define DISPLAY_HZ				0x02
+#define DISPLAY_25P_BAT		    0x04
+#define DISPLAY_50P_BAT         0x08
 
 // CS_ PB5 WR_ PB4 DATA PC3
 #define LCD_CS_HIGH()     GPIO_SetBits(GPIOB, GPIO_Pin_5)
