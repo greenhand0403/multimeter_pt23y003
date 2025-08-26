@@ -571,27 +571,28 @@ static void set_range_pins(ohm_range_t r)
 #pragma region 液晶屏初始化
 void LCDInit(void)
 {
-	// sys_delay_init();  // 初始化 SysTick 定时器 1us 精度
-
     GPIO_InitTypeDef GPIO_InitStruct;
+    // CS
 	GPIO_InitStruct.GPIO_Mode=GPIO_Mode_OutPP;
-	GPIO_InitStruct.GPIO_Pull = GPIO_Pull_NoPull;
-	GPIO_InitStruct.GPIO_Pin=GPIO_Pin_4;
-	GPIO_Init(GPIOB, &GPIO_InitStruct);
-	GPIO_InitStruct.GPIO_Mode=GPIO_Mode_OutPP;
-	GPIO_InitStruct.GPIO_Pull = GPIO_Pull_NoPull;
+	GPIO_InitStruct.GPIO_Pull = GPIO_Pull_Up;
 	GPIO_InitStruct.GPIO_Pin=GPIO_Pin_5;
 	GPIO_Init(GPIOB, &GPIO_InitStruct);
+    // WR
 	GPIO_InitStruct.GPIO_Mode=GPIO_Mode_OutPP;
-	GPIO_InitStruct.GPIO_Pull = GPIO_Pull_NoPull;
+	GPIO_InitStruct.GPIO_Pull = GPIO_Pull_Up;
+	GPIO_InitStruct.GPIO_Pin=GPIO_Pin_4;
+	GPIO_Init(GPIOB, &GPIO_InitStruct);
+    // DATA
+	GPIO_InitStruct.GPIO_Mode=GPIO_Mode_OutPP;
+	GPIO_InitStruct.GPIO_Pull = GPIO_Pull_Up;
 	GPIO_InitStruct.GPIO_Pin=GPIO_Pin_3;
 	GPIO_Init(GPIOC, &GPIO_InitStruct);
-
+    
     HT1621_Init();
 	// TODO: 测试LCD屏
-    uint8_t seg_data[] = {DISPLAY_HALF_BAT, DISPLAY_HZ, DISPLAY_MOhm};  // 示例数据
-    HT1621_WriteData(HALF_BAT_ADDR, seg_data, 3);
-
+    // uint8_t seg_data[] = {DISPLAY_HALF_BAT};  // 示例数据
+    // HT1621_WriteData(HALF_BAT_ADDR, seg_data, 1);
+    // , DISPLAY_HZ, DISPLAY_MOhm
 	// HT1621_WriteData(HALF_BAT_ADDR, DISPLAY_HALF_BAT, 1);
 	// HT1621_WriteData(HALF_BAT_ADDR, DISPLAY_HZ, 1);
 	// HT1621_WriteData(HALF_BAT_ADDR, DISPLAY_MOhm, 1);
@@ -1090,9 +1091,13 @@ int main (void)
     LCDInit();
     while (1)
     {
-        /* code */
+        uint8_t ff[16]; for (int i=0;i<16;i++) ff[i]=0xFF;
+        HT1621_WriteData(0x00, ff, 16);
+        delay_ms(2000);
+        HT1621_Clear();
+        delay_ms(2000);
     }
-
+    
     PowerKey_GPIO_Init(); // 长按开关机的按键输入配置
     TIM2_Init_10ms();// 长按时间定时器TIM2
     PowerKey_ResetCounters();// 长按时间计数清零

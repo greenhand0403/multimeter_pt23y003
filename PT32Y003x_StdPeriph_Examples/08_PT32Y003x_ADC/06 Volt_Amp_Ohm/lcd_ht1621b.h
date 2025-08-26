@@ -25,7 +25,7 @@
 #define DISPLAY_HALF_BAT        0x08
 #define DISPLAY_HZ				0x02
 
-// CS PB5 WR PB4 DATA PC3
+// CS_ PB5 WR_ PB4 DATA PC3
 #define LCD_CS_HIGH()     GPIO_SetBits(GPIOB, GPIO_Pin_5)
 #define LCD_CS_LOW()      GPIO_ResetBits(GPIOB, GPIO_Pin_5)
 
@@ -36,8 +36,8 @@
 #define LCD_DATA_LOW()    GPIO_ResetBits(GPIOC, GPIO_Pin_3)
 
 void HT1621_Init(void);
-void HT1621_WriteCmd(uint8_t cmd);
+// void HT1621_WriteCmd(uint8_t cmd);
 void HT1621_WriteData(uint8_t addr, const uint8_t *data, uint8_t len);
 void HT1621_Clear(void);
-
+void HT1621_SendCommand(uint8_t cmd);
 #endif
