@@ -6,7 +6,7 @@
 #include "PT32Y003x.h"
 #include "PT32Y003x_gpio.h"
 #include "delay.h"
-
+// #include <string.h>
 #define HALF_BAT_ADDR           0x14
 #define FULL_BAT_ADDR           0x13
 #define AMP_ADDR                0x12
@@ -42,4 +42,9 @@ void HT1621_Init(void);
 void HT1621_WriteData(uint8_t addr, const uint8_t *data, uint8_t len);
 void HT1621_Clear(void);
 void HT1621_SendCommand(uint8_t cmd);
+void LCD_ShowDigit(uint8_t pos, uint8_t val, bool dp);
+void LCD_ShowNumber4(uint16_t value);
+void LCD_Clear4Digits(void);
+// 供电压表专用：一次性把 4 位+图标写进去
+void LCD_ShowVoltage_4digits(uint16_t scaled_2dp, bool show_minus, bool overflow);
 #endif

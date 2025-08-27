@@ -12,16 +12,17 @@
 #include <PT32Y003x_pwm.h>
 #include <PT32Y003x_exti.h>
 
-void Software_Delay(void)//软件延时
-{
-	u8 i, j,x;
-	for(i=0; i<200; i++)
-		for(j=0; j<200; j++)
-			for(x=0; x<50; x++);
-}
 #pragma region 宏定义、全局变量和工具函数配置
 char log_buffer[64];  // 用于打印日志 足够存储格式化字符串
-
+#define ENABLE_LOG 0
+#if ENABLE_LOG
+  #define LOG_UART UART1
+  #define LOGF(...) do{ sprintf(log_buffer, __VA_ARGS__); UART1_SendString(log_buffer); }while(0)
+  #define LOGS(s)   do{ UART1_SendString(s); }while(0)
+#else
+  #define LOGF(...) do{}while(0)
+  #define LOGS(s)   do{}while(0)
+#endif
 // 读到的ADC原始数据 本来是全局的，给判断变化率10%使用的，但目前未用上
 static uint16_t g_adc_pa1_raw = 0;  // 序号0（PA1）
 static uint16_t g_adc_pc4_raw = 0;  // 序号1（PC4）
@@ -118,6 +119,7 @@ static inline float V_DV(float v_raw) { return v_raw - g_v1_ref; }
 typedef enum { RANGE_OHM = 0, RANGE_KOHM, RANGE_MOHM } ohm_range_t;
 #pragma endregion
 #pragma region 串口驱动
+#if ENABLE_LOG
 /*******************************************************************************
 *Function:	UART_GPIO_Config
 *Description:	配置UART引脚
@@ -128,12 +130,21 @@ typedef enum { RANGE_OHM = 0, RANGE_KOHM, RANGE_MOHM } ohm_range_t;
 *******************************************************************************/
 void UART_GPIO_Config(void)
 {
+
 	/* 配置UART管脚的复用功能 */
-	// GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_1, AFIO_AF_1,ENABLE);	//PB1 TX1
-	// GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_1, AFIO_AF_1,ENABLE);	//PD1 RX1
-	GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_5, AFIO_AF_0,ENABLE);	//PD5 TX1
-	GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_6, AFIO_AF_0,ENABLE);	//PD6 RX1
+    if (LOG_UART==UART1)
+    {
+        GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_1, AFIO_AF_1,ENABLE);	//PB1 TX1
+        GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_1, AFIO_AF_1,ENABLE);	//PD1 RX1
+    }
+    else
+    {
+        GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_5, AFIO_AF_0,ENABLE);	//PD5 TX0
+        GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_6, AFIO_AF_0,ENABLE);	//PD6 RX0
+    }
+
 }
+
 /*******************************************************************************
 *Function:	UART_Mode_Config
 *Description:	配置UART
@@ -144,6 +155,7 @@ void UART_GPIO_Config(void)
 *******************************************************************************/
 void UART_Mode_Config(void)
 {
+
 	UART_InitTypeDef  UART_InitStruct;
 
 	/*初始化UART0*/
@@ -153,14 +165,11 @@ void UART_Mode_Config(void)
 	UART_InitStruct.UART_ParityMode=UART_ParityMode_Odd;
 	UART_InitStruct.UART_Receiver=UART_Receiver_Enable;
 	UART_InitStruct.UART_LoopbackMode=UART_LoopbackMode_Disable;
-	// UART_Init(UART1, &UART_InitStruct);
 
-	/*开启UART1的收发功能*/
-	// UART_Cmd(UART1, ENABLE);
-	UART_Init(UART0, &UART_InitStruct);
+    /*开启收发功能*/
+	UART_Cmd(LOG_UART, ENABLE);
+    UART_Init(LOG_UART, &UART_InitStruct);
 
-	/*开启UART0的收发功能*/
-	UART_Cmd(UART0, ENABLE);
 }
 /*******************************************************************************
 *Function:	UART_Driver
@@ -174,17 +183,17 @@ void UART_Driver(void)
 	UART_GPIO_Config();
 	UART_Mode_Config();
 }
+
 // 串口发送字符串函数
 void UART1_SendString(const char* str)
 {
     while (*str)
     {
-        // UART_SendData(UART1, *str++);
-        // while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
-		UART_SendData(UART0, *str++);
-        while (UART_GetFlagStatus(UART0, UART_FLAG_TXE) == RESET);
+        UART_SendData(LOG_UART, *str++);
+        while (UART_GetFlagStatus(LOG_UART, UART_FLAG_TXE) == RESET);
     }
 }
+#endif
 #pragma endregion
 #pragma region 输出参考电压2V并配置PA1的ADC采集
 /*******************************************************************************
@@ -205,8 +214,8 @@ void ADC_Driver(void)
 	ADC_InitStruct.ADC_TimerTriggerSource=ADC_TimerTriggerSource_TIM1ADC;//定时源触发选择TIM0事件
 	ADC_InitStruct.ADC_Align = ADC_Align_Left;					//左对齐
 	ADC_InitStruct.ADC_Channel = ADC_Channel_1;//PA1
-	ADC_InitStruct.ADC_ReferencePositive = ADC_ReferencePositive_BG2v0;
 	ADC_InitStruct.ADC_BGVoltage=ADC_BGVoltage_BG1v0;//BGS电压1.0v
+	ADC_InitStruct.ADC_ReferencePositive = ADC_ReferencePositive_BG2v0;
 	ADC_BGCRSetBGNC(ADC);// SET ADC_BGNC BIT
 	ADC_Init(ADC, &ADC_InitStruct);
 
@@ -323,11 +332,11 @@ void deep_sleep()
     {
         // 休眠提示音
         PWM_Cmd(TIM1, ENABLE);
-        delay_ms(200);
+        delay_ms(50);
         PWM_Cmd(TIM1, DISABLE);
 
-        sprintf(log_buffer, "DEEPSLEEP ms_ticks=%u\r\n", s_ms_ticks);
-        UART1_SendString(log_buffer);
+        HT1621_Clear();
+        LOGF("DEEPSLEEP ms_ticks=%u\r\n", s_ms_ticks);
         // 等待PC5按键松开
         while (GPIO_ReadDataBit(GPIOC,GPIO_Pin_5)==0)
         {
@@ -360,17 +369,16 @@ void deep_sleep()
         GPIO_Init(GPIOD, &GPIO_InitStructure);
         GPIO_InitStructure.GPIO_Pin = GPIO_Pin_All&(~GPIO_Pin_5);//WAKE KEY
         GPIO_Init(GPIOC, &GPIO_InitStructure);
-        // 关闭 UART 等 外设 现在用 UART0 做 log
-        UART_Cmd(UART0, DISABLE);
-        // UART_Cmd(UART1, DISABLE);
-        
+#if ENABLE_LOG
+        // 关闭 UART
+        UART_Cmd(LOG_UART, DISABLE);
+#endif
         // 打开外部中断 配置PC5为唤醒源
         Wake_Key_Init();
         SysTick->CTRL &= ~SysTick_CTRL_ENABLE_Msk;  // 进睡前关闭系统定时器
         g_run_mode = RUN_MODE_DEEPSLEEP;
         poweroff_request = 0;
-        // EXTI_ClearFlag(EXTIC, GPIO_Pin_5);
-        // EXTI_ClearFlag(EXTIC, GPIO_Pin_5);
+
         // 进入深度睡眠
         PWR_EnterDeepSleepMode(PWR_DeepSleepEntry_WFI);
         g_run_mode = RUN_MODE_WAKEUP;
@@ -387,12 +395,11 @@ void deep_sleep()
         
         // 记录时间戳
         uint32_t t0 = s_ms_ticks;
-
+#if ENABLE_LOG
         UART_Driver();
-        UART_Cmd(UART0, ENABLE);
-
-        sprintf(log_buffer,"WAKEUP ticks=%u\r\n",s_ms_ticks);
-        UART1_SendString(log_buffer);
+        UART_Cmd(LOG_UART, ENABLE);
+#endif
+        LOGF("WAKEUP ticks=%u\r\n",s_ms_ticks);
 
         // 在唤醒后保持按住 2 秒回到工作态 若未长按 5s后重新睡眠 由TIM2中断服务程序修改系统运行状态
         while(g_run_mode == RUN_MODE_WAKEUP)
@@ -406,15 +413,16 @@ void deep_sleep()
                 TIM_Cmd(TIM2, DISABLE);
                 // 再次入睡（递归进入OK）
                 g_run_mode = RUN_MODE_NORMALWORK;
-                UART1_SendString("sleep again\r\n");
+                LOGS("sleep again\r\n");
                 deep_sleep();
                 return; // 不会走到这里
             }
         }
 
         idle_last_ms = s_ms_ticks;//重置变化率<10%的120s计数
-        sprintf(log_buffer,"NORMALWORK ms_ticks=%u\r\n",s_ms_ticks);
-        UART1_SendString(log_buffer);
+
+        LOGF("NORMALWORK ms_ticks=%u\r\n",s_ms_ticks);
+
         // 返回正常工作，清除标志位，此时需要再次调用万用表外设配置函数
         hadSetMultimeterInit = false;
     }
@@ -438,10 +446,8 @@ static void Idle_Update(float cur_value)
     last_value = cur_value;
     // 当前时间 - 上一次空闲时间戳
     if ((s_ms_ticks - idle_last_ms) >= IDLE_WINDOW_MS) {
-        sprintf(log_buffer,"%d: %d - %d\r\n",g_run_mode,s_ms_ticks,idle_last_ms);
-        UART1_SendString(log_buffer);
-        // idle_last_ms = 0;
-        // s_ms_ticks = 0;
+        LOGF("%d: %d - %d\r\n",g_run_mode,s_ms_ticks,idle_last_ms);
+
         if(g_run_mode == RUN_MODE_NORMALWORK) {
             deep_sleep();
         }// 进入深睡
@@ -589,14 +595,6 @@ void LCDInit(void)
 	GPIO_Init(GPIOC, &GPIO_InitStruct);
     
     HT1621_Init();
-	// TODO: 测试LCD屏
-    uint8_t seg_data[] = {0x5};  // 示例数据
-
-    HT1621_WriteData(FIRST_R_ADDR, seg_data, 1);
-    // , DISPLAY_HZ, DISPLAY_MOhm
-	// HT1621_WriteData(HALF_BAT_ADDR, DISPLAY_HALF_BAT, 1);
-	// HT1621_WriteData(HALF_BAT_ADDR, DISPLAY_HZ, 1);
-	// HT1621_WriteData(HALF_BAT_ADDR, DISPLAY_MOhm, 1);
 }
 static void lcd_show_ready(void)           { /* LCD_ShowReady(); */ }
 static void lcd_show_overflow(ohm_range_t r){ /* LCD_ShowOverflow(r); */ }
@@ -605,11 +603,10 @@ static void lcd_show_ohms(float rx, ohm_range_t r)
     // 这里只做串口示例，LCD 你自己接
     switch (r)
     {
-        case RANGE_OHM:  sprintf(log_buffer, "Ohm: %.0f \r\n", rx); break;          // 0000~0999Ω
-        case RANGE_KOHM: sprintf(log_buffer, "Ohm: %.2f k\r\n", rx/1000.0f); break; // xx.xx kΩ
-        case RANGE_MOHM: sprintf(log_buffer, "Ohm: %.2f M\r\n", rx/1e6f); break;    // xx.xx MΩ
+        case RANGE_OHM:  LOGF("Ohm: %d \r\n", rx); break;          // 0000~0999Ω
+        case RANGE_KOHM: LOGF("Ohm: %d k\r\n", (int)(rx/10.0f +0.5f)); break; // xx.xx kΩ
+        case RANGE_MOHM: LOGF("Ohm: %d M\r\n", (int)(rx/10000.0f +0.5f)); break;    // xx.xx MΩ
     }
-    UART1_SendString(log_buffer);
 }
 #pragma endregion
 #pragma region 电池电量检测
@@ -671,9 +668,8 @@ void BatteryTask_Update(void)
     else                      g_batt.v_filt = (1.0f-BATT_ALPHA)*g_batt.v_filt + BATT_ALPHA*v;
 
     int lvl = Battery_LevelFromV(g_batt.v_filt);
-    // 打印（你后续可把 lvl 映射到 LCD 图标）
-    sprintf(log_buffer, "BATT: %.3fV [%d/4]\r\n", g_batt.v_filt, lvl);
-    UART1_SendString(log_buffer);
+    
+    LOGF("BATT: %dV [%d/4]\r\n", (int)(g_batt.v_filt*1000.0f+0.5f), lvl);
 
     g_batt.level = lvl;
 }
@@ -726,7 +722,7 @@ void BuzzerInit(void)
 #pragma region 电压表业务逻辑
 // === 采样与显示参数（按需调整） ===
 #ifndef VOLT_SAMPLE_PERIOD_MS
-#define VOLT_SAMPLE_PERIOD_MS   1000U    // 电压更新周期：20ms
+#define VOLT_SAMPLE_PERIOD_MS   20U    // 电压更新周期：20ms
 #endif
 
 #ifndef K_VOLT_SLOPE
@@ -762,24 +758,20 @@ static volt_ctx_t g_volt;
    正电压：保留2位小数；负电压：保留1位小数；越界时显示上/下限 + 溢出标志 */
 static void lcd_show_voltage_pos(float v, int overflow)
 {
-    char buf[32];
-    if (overflow) {
-        // 上限溢出（例如显示固定 12.00 + 标志）
-        sprintf(buf, "V=%.4fV(OVF)", VOLT_MAX_V);
-    } else {
-        sprintf(buf, "V=%.4fV", v);
-    }
-    UART1_SendString(buf); UART1_SendString("\r\n");
+    // 四舍五入到 2 位小数并转 0.01V 的整数
+    uint16_t scaled = (uint16_t)(v * 100.0f + 0.5f);
+    if (scaled > 9999) scaled = 9999;
+    // 第二位加 V & DP；正电压不加负号
+    LCD_ShowVoltage_4digits(scaled, false, overflow ? true : false);
 }
 static void lcd_show_voltage_neg(float v, int overflow)
 {
-    char buf[32];
-    if (overflow) {
-        sprintf(buf, "V=-%.3fV(OVF)", -VOLT_MIN_V);
-    } else {
-        sprintf(buf, "V=%.3fV", v);   // v为负
-    }
-    UART1_SendString(buf); UART1_SendString("\r\n");
+    float av = (v < 0) ? -v : v;     // 取绝对值显示
+    uint16_t scaled = (uint16_t)(av * 100.0f + 0.5f);
+    if (scaled > 9999) scaled = 9999;
+    // 第二位加 V & DP & 负号；如溢出再加溢出标
+    LCD_ShowVoltage_4digits(scaled, true, overflow ? true : false);
+
 }
 
 /* ========== 初始化：不重采“1V基准”，使用开机时的 g_v1_ref ========== */
@@ -800,8 +792,7 @@ void VoltTask_Update(void)
     // 2) 读取原始电压并去偏置
     float v_raw = read_vin(AVG_N);     // 你已有的平均读法
 
-    sprintf(log_buffer,"ticks=%u v= %.4f idle=%d\r\n", s_ms_ticks,v_raw,idle_last_ms);
-    UART1_SendString(log_buffer);
+    LOGF("ticks=%u v=%d idle=%d\r\n", s_ms_ticks,(int)(v_raw*1000.0f+0.5f),idle_last_ms);
 
     // 对应换算公式是 ( vout - 0.9983 ) * 10000.0 / 379.2
     float dv = V_DV(v_raw);
@@ -843,7 +834,7 @@ void AmpTask_Init(void)
     g_amp.mAflag = false;
     g_amp.st     = AMP_S_IDLE_WAIT;
 
-    UART1_SendString("Amp init: A-range (PA2=0)\r\n");
+    LOGS("Amp init: A-range (PA2=0)\r\n");
 }
 // 每次调用仅推进一步；无阻塞、无 while(1)
 void AmpTask_Update(void)
@@ -855,7 +846,7 @@ void AmpTask_Update(void)
         g_amp.vin  = read_vin(AVG_N);
         g_amp.iamp = (V_DV(g_amp.vin) * 10.0f / GAIN_A);  // 以 A 档公式估计
         // 串口可选日志
-        // sprintf(log_buffer, "[IDLE] I≈%.0fmA vin=%.4f\r\n", g_amp.iamp*1000.0f, g_amp.vin); UART1_SendString(log_buffer);
+        LOGF("I=%dmA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
         if (g_amp.iamp >= I_IDLE_A) {
             g_amp.st = AMP_S_RANGE_DECIDE;
         }
@@ -868,12 +859,12 @@ void AmpTask_Update(void)
             GPIO_SetBits(GPIOA, GPIO_Pin_2);
             g_amp.mAflag = true;
             g_amp.st     = AMP_S_MEASURE_mA;
-            UART1_SendString("enter mA range (PA2=1)\r\n");
+            LOGS("enter mA range (PA2=1)\r\n");
         } else {                           // 留在 A 档
             GPIO_ResetBits(GPIOA, GPIO_Pin_2);
             g_amp.mAflag = false;
             g_amp.st     = AMP_S_MEASURE_A;
-            UART1_SendString("stay in A range (PA2=0)\r\n");
+            LOGS("stay in A range (PA2=0)\r\n");
         }
         break;
 
@@ -882,35 +873,34 @@ void AmpTask_Update(void)
         g_amp.iamp = V_DV(g_amp.vin) * (MA_SLOPE_FIX / GAIN_mA);// A
         // 退出条件
         if (g_amp.iamp >= I_MA_MAX) {                // 超 mA 档上限 -> 重新判档
-            UART1_SendString("mA->A (>=294mA)\r\n");
+            LOGS("mA->A (>=294mA)\r\n");
             g_amp.st = AMP_S_RANGE_DECIDE;
             break;
         }
         if (g_amp.iamp < I_IDLE_A) {                 // 无负载 -> 回等待
-            UART1_SendString("load removed (mA)\r\n");
+            LOGS("load removed (mA)\r\n");
             g_amp.st = AMP_S_IDLE_WAIT;
             break;
         }
 
         // 显示（LCD 自接入）
-        sprintf(log_buffer, "I=%.0fmA (vin=%.4f)\r\n", g_amp.iamp*1000.0f, g_amp.vin);
-        UART1_SendString(log_buffer);
+        LOGF("I=%dmA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
         break;
 
     case AMP_S_MEASURE_A:
         g_amp.vin  = read_vin(AVG_N);
         g_amp.iamp = V_DV(g_amp.vin) * 10.0f / GAIN_A; // A
         if (g_amp.iamp < I_IDLE_A) {                 // 无负载 -> 回等待
-            UART1_SendString("load removed (A)\r\n");
+            LOGS("load removed (A)\r\n");
             g_amp.st = AMP_S_IDLE_WAIT;
             break;
         }
 
         if (g_amp.iamp >= 2.501f) {
-            UART1_SendString("OVER: >=2.501A\r\n");
+            LOGS("OVER: >=2.501A\r\n");
         } else {
-            sprintf(log_buffer, "I=%.3fA (vin=%.4f)\r\n", g_amp.iamp, g_amp.vin);
-            UART1_SendString(log_buffer);
+            LOGF("I=%dA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
+
         }
         break;
     }
@@ -930,7 +920,7 @@ void OhmTask_Init(void)
 {
     g_ohm.st    = OHM_S_WAIT_CONNECT;
     g_ohm.range = RANGE_OHM; // 初值无所谓，进入 SELECT_RANGE 会重判
-    UART1_SendString("Ohm init\r\n");
+    LOGS("Ohm init\r\n");
 }
 
 // 每次调用仅推进一步；无阻塞、无 while(1)
@@ -958,11 +948,11 @@ void OhmTask_Update(void)
         g_ohm.vin = read_vin(AVG_N);
         if (g_ohm.vin > VIN_OPEN_TH) { g_ohm.st = OHM_S_WAIT_CONNECT; return; }
         if (g_ohm.vin < VIN_OHM_ENTER) {
-            g_ohm.range = RANGE_OHM;   set_range_pins(g_ohm.range); UART1_SendString("range: ohm\r\n");
+            g_ohm.range = RANGE_OHM;   set_range_pins(g_ohm.range); LOGS("range: ohm\r\n");
         } else if (g_ohm.vin < VIN_K_ENTER) {
-            g_ohm.range = RANGE_KOHM;  set_range_pins(g_ohm.range); UART1_SendString("range: k\r\n");
+            g_ohm.range = RANGE_KOHM;  set_range_pins(g_ohm.range); LOGS("range: k\r\n");
         } else {
-            g_ohm.range = RANGE_MOHM;  set_range_pins(g_ohm.range); UART1_SendString("range: M\r\n");
+            g_ohm.range = RANGE_MOHM;  set_range_pins(g_ohm.range); LOGS("range: M\r\n");
         }
         g_ohm.st = OHM_S_MEASURE;
         break;
@@ -971,7 +961,7 @@ void OhmTask_Update(void)
         g_ohm.vin = read_vin(AVG_N);
 
         // 拔掉/开路 -> 回等待
-        if (g_ohm.vin >= VIN_OPEN_TH) { UART1_SendString("ohm: open/remove\r\n"); g_ohm.st = OHM_S_WAIT_CONNECT; return; }
+        if (g_ohm.vin >= VIN_OPEN_TH) { LOGS("ohm: open/remove\r\n"); g_ohm.st = OHM_S_WAIT_CONNECT; return; }
 
         // 档位迟滞（防抖动）
         if (g_ohm.range == RANGE_OHM && g_ohm.vin > VIN_OHM_EXIT) { g_ohm.st = OHM_S_SELECT_RANGE; return; }
@@ -1020,7 +1010,7 @@ void MultimeterInit()
     LCDInit();
     if (!hadSetMultiMeterMode)
     {
-        UART1_SendString("Meter IO Init");
+        LOGS("Meter IO Init");
         // PA2 PA3 输入配置 根据情况选择电流表、电压表或欧姆表
         MultiMeterIOInit();
     }
@@ -1029,32 +1019,28 @@ void MultimeterInit()
 	ADC_Driver();
 
     idle_last_ms = s_ms_ticks;//重置变化率<10%的120s计数
-    // if (!hadSetMultiMeterMode)
+    
+    // init state: PA2 PA3 , LOW LOW mean VoltTest, LOW HIGH mean AmpTest, HIGH HIGH mean OhmTest
+    if (GPIO_ReadDataBit(GPIOA,GPIO_Pin_2)==RESET)
     {
-        // init state: PA2 PA3 , LOW LOW mean VoltTest, LOW HIGH mean AmpTest, HIGH HIGH mean OhmTest
-        if (GPIO_ReadDataBit(GPIOA,GPIO_Pin_2)==RESET)
+        if (GPIO_ReadDataBit(GPIOA,GPIO_Pin_3)==RESET)
         {
-            if (GPIO_ReadDataBit(GPIOA,GPIO_Pin_3)==RESET)
-            {
-                sprintf(log_buffer, "Volt Mode\r\n");
-                UART1_SendString(log_buffer);
-                meter_mode = METER_MODE_VOLT;
-            }
-            else
-            {
-                sprintf(log_buffer, "Amp Mode\r\n");
-                UART1_SendString(log_buffer);
-                meter_mode = METER_MODE_AMP;
-            }
+            LOGS("Volt Mode\r\n");
+            meter_mode = METER_MODE_VOLT;
         }
         else
         {
-            sprintf(log_buffer, "Ohm Mode\r\n");
-            UART1_SendString(log_buffer);
-            meter_mode = METER_MODE_OHM;
+            LOGS("Amp Mode\r\n");
+            meter_mode = METER_MODE_AMP;
         }
-        hadSetMultiMeterMode = true;
     }
+    else
+    {
+        LOGS("Ohm Mode\r\n");
+        meter_mode = METER_MODE_OHM;
+    }
+    hadSetMultiMeterMode = true;
+    
     switch (meter_mode)
     {
     case METER_MODE_VOLT:
@@ -1069,15 +1055,13 @@ void MultimeterInit()
     default:
         break;
     }
-
     // ★ 新增：开机抓一次“1V偏置”
     CaptureInitialV1(100);
-    sprintf(log_buffer,"Mode=%d ticks=%u v_ref=%.4f\r\n", meter_mode, s_ms_ticks, g_v1_ref);
-    UART1_SendString(log_buffer);
+    LOGF("Mode=%d ticks=%u v_ref=%d\r\n", meter_mode, s_ms_ticks, (int)(g_v1_ref*10000.0f+0.05f));
 
     // 初始化仪表成功提示音
     PWM_Cmd(TIM1, ENABLE);
-    delay_ms(200);
+    delay_ms(50);
     PWM_Cmd(TIM1, DISABLE);
     
     hadSetMultimeterInit = true;
@@ -1088,24 +1072,16 @@ void MultimeterInit()
 int main (void)
 {
     SysTick_Init_1kHz();// 系统时钟定时器 us ms 计时已测试 准确
-    // 测试 LCD
-    LCDInit();
-    while (1)
-    {
-        // uint8_t ff[16]; for (int i=0;i<16;i++) ff[i]=0xFF;
-        // HT1621_WriteData(0x00, ff, 16);
-        // delay_ms(2000);
-        // HT1621_Clear();
-        delay_ms(2000);
-    }
     
     PowerKey_GPIO_Init(); // 长按开关机的按键输入配置
     TIM2_Init_10ms();// 长按时间定时器TIM2
     PowerKey_ResetCounters();// 长按时间计数清零
 
-    // uart0_tx 串口日志 PD5
+#if ENABLE_LOG
+    // uart0_tx 串口日志 PD5 uart1_tx 串口日志 PB1
     UART_Driver();
-    UART1_SendString("UART1 Init");
+    LOGS("UART Init");
+#endif
 
     // 最新改动，开机直接进休眠，长按2秒才会回
     deep_sleep();
@@ -1136,23 +1112,20 @@ int main (void)
             BatteryTask_Update();     // ★ 每秒打印一次电池电量
             if (poweroff_request)//要求长按松手后才关机
             {
-                UART1_SendString("wait to poweroff");
+                LOGS("wait to poweroff");
                 deep_sleep();
             }
             delay_ms(20);
         }
         else if (g_run_mode == RUN_MODE_DEEPSLEEP)
         {
-            // sprintf(log_buffer,"RUN_POSTWAKE ms_ticks=%u\r\n",s_ms_ticks);
-            // UART1_SendString(log_buffer);
+
         }
         else if (g_run_mode == RUN_MODE_WAKEUP)
         {
 
         }
     }
-    // 延迟打印看工作状态和运行时间
-    // TODO: 电流表和电压表要改 加了个固定负号图标，不占用第一位数，表笔正反接时，除了负号变化，其他数字不变
 }
 #pragma endregion
 #ifdef  USE_FULL_ASSERT

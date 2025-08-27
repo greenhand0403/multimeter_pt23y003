@@ -26,33 +26,12 @@
 /* Exported macro ------------------------------------------------------------*/
 /* Exported functions ------------------------------------------------------- */
 
-void NMI_Handler(void);
-void HardFault_Handler(void);
-void SVC_Handler(void);
-void PendSV_Handler(void);
 void SysTick_Handler(void);
-void SWDG_Handler(void);
-void PLLFAIL(void);
-void IFMC_Handler(void);
-void EXTIA_Handler(void);
-void EXTIB_Handler(void);
 void EXTIC_Handler(void);
-void EXTID_Handler(void);
-void CMP0_Handler(void);
-void CMP1_Handler(void);
-void DAC_Handler(void);
-void ADC_Handler(void);
 void TIM1_Handler(void);
 void TIM0_Handler(void);
 void TIM4_Handler(void);
 void TIM2_Handler(void);
-void PVD_Handler(void);
-void I2C0_Handler(void);
-void I2C1_Handler(void);
-void SPI0_Handler(void);
-void SPI1_Handler(void);
-void UART0_Handler(void);
-void RTC_Handler(void);
 
 
 /**

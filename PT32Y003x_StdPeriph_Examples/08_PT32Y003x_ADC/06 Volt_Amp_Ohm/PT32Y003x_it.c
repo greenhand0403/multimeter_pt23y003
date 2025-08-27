@@ -28,44 +28,6 @@
 /* Private function prototypes -----------------------------------------------------------------------------*/
 /* Private functions ---------------------------------------------------------------------------------------*/
 
-
-
-/**
-* @brief NMI中断服务函数
-* @param None
-* @retval None
-*/
-void NMI_Handler(void)
-{
-}
-
-/**
-* @brief HardFault中断服务函数
-* @param None
-* @retval None
-*/
-void HardFault_Handler(void)
-{
-  	while (1);
-}
-
-/**
-* @brief SVC中断服务函数
-* @param None
-* @retval None
-*/
-void SVC_Handler(void)
-{
-}
-
-/**
-* @brief PendSV中断服务函数
-* @param None
-* @retval None
-*/
-void PendSV_Handler(void)
-{
-}
 extern volatile uint32_t s_ms_ticks;   // 1ms 计数（全局）
 extern volatile uint32_t s_ms_delay;   // 阻塞式 ms 延时用
 // SysTick 中断：1ms 心跳 + 阻塞延时递减
@@ -81,53 +43,6 @@ void SysTick_Handler(void)
 }
 
 /**
-* @brief IWDG中断服务函数
-* @param None
-* @retval None
-*/
-void IWDG_Handler(void)
-{
-	
-}
-
-/**
-* @brief PLLFAIL
-* @param None
-* @retval None
-*/
-void HSEFAIL(void)
-{
-	
-}
-
-/**
-* @brief IMMC中断服务函数
-* @param None
-* @retval None
-*/
-void IMMC_Handler(void)
-{
-}
-
-/**
-* @brief PA中断服务函数
-* @param None
-* @retval None
-*/
-void EXTIA_Handler(void)
-{
-}
-
-/**
-* @brief PB中断服务函数
-* @param None
-* @retval None
-*/
-void EXTIB_Handler(void)
-{
-}
-
-/**
 * @brief PC中断服务函数
 * @param None
 * @retval None
@@ -135,25 +50,6 @@ void EXTIB_Handler(void)
 void EXTIC_Handler(void)
 {
   EXTI_ClearFlag(EXTIC, GPIO_Pin_5);
-}
-
-/**
-* @brief PD中断服务函数
-* @param None
-* @retval None
-*/
-void EXTID_Handler(void)
-{
-	
-}
-
-/**
-* @brief ADC中断服务函数
-* @param None
-* @retval None
-*/
-void ADC_Handler(void)
-{
 }
 
 /**
@@ -270,57 +166,6 @@ void TIM4_Handler(void)
   // TIM_ClearFlag(TIM4, TIM_FLAG_ARF);
   // mcu_sleep_count += 5;
 }
-
-/**
-* @brief PVD中断服务函数
-* @param None
-* @retval None
-*/
-void PVD_Handler(void)
-{
-}
-
-/**
-* @brief I2C0中断服务函数
-* @param None
-* @retval None
-*/
-void I2C0_Handler(void)
-{
-}
-
-
-/**
-* @brief SPI0中断服务函数
-* @param None
-* @retval None
-*/
-void SPI0_Handler(void)
-{
-}
-
-
-/**
-* @brief UART0中断服务函数
-* @param None
-* @retval None
-*/
-void UART0_Handler(void)
-{
-	
-}
-
-/**
-* @brief UART1中断服务函数
-* @param None
-* @retval None
-*/
-void UART1_Handler(void)
-{
-	
-}
-
-
 /**
   * @}
   */

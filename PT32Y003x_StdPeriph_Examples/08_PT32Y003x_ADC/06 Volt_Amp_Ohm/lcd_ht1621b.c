@@ -79,8 +79,114 @@ void HT1621_Init(void)
     HT1621_Clear();
 }
 
-void HT1621_Clear(void)
+// ===== 显示数字（0~9）的 7 段映射：{L_nibble, R_nibble} =====
+// 段位命名 ABCDEFG，顺时针从顶横开始，G 为中横。
+// L: A(0x1) F(0x2) E(0x4) D(0x8)
+// R: B(0x1) G(0x2) C(0x4) [R的0x8可留作DP]
+static const uint8_t kDigitMap_7seg[10][2] = {
+    /*0*/ {0x0F, 0x05},  // A F E D  +  B C
+    /*1*/ {0x00, 0x05},  //           +  B C
+    /*2*/ {0x0D, 0x03},  // A   E D  +  B G
+    /*3*/ {0x09, 0x07},  // A     D  +  B G C
+    /*4*/ {0x02, 0x07},  //   F      +  B G C
+    /*5*/ {0x0B, 0x06},  // A F   D  +    G C
+    /*6*/ {0x0F, 0x06},  // A F E D  +    G C
+    /*7*/ {0x01, 0x05},  // A         +  B   C
+    /*8*/ {0x0F, 0x07},  // A F E D  +  B G C
+    /*9*/ {0x0B, 0x07},  // A F   D  +  B G C
+};
+    
+// 每一位的“左地址”（右地址=左地址+1）
+static const uint8_t kDigitAddrL[4] = {
+    FIRST_L_ADDR,  SECOND_L_ADDR,  THIRD_L_ADDR,  FOURTH_L_ADDR
+};
+    
+// 写入“某一位”的 L/R 两个 4bit（一次发 1 字节，低4写L，高4写R）
+static inline void LCD_WriteDigitPair(uint8_t addrL, uint8_t nibL, uint8_t nibR)
 {
-    uint8_t zero[16] = {0};              // 32 个 4bit
-    HT1621_WriteData(0x00, zero, 16);
+    uint8_t b = (uint8_t)((nibR << 4) | (nibL & 0x0F));
+    HT1621_WriteData(addrL, &b, 1);
+}
+// 清 4 位（仅数码段，不动其它未用地址）
+void LCD_Clear4Digits(void)
+{
+    uint8_t z = 0x00;
+    for (int i = 0; i < 4; ++i) {
+        HT1621_WriteData(kDigitAddrL[i], &z, 1);
+    }
+}
+// pos: 0..3（从左到右），val: 0..9，dp=true 则在该位右半字节加小数点(0x8)
+void LCD_ShowDigit(uint8_t pos, uint8_t val, bool dp)
+{
+    if (pos > 3 || val > 9) return;
+    uint8_t nibL = kDigitMap_7seg[val][0];
+    uint8_t nibR = kDigitMap_7seg[val][1];
+    if (dp) nibR |= 0x8;
+    LCD_WriteDigitPair(kDigitAddrL[pos], nibL, nibR);
+}
+    
+// 简单整数 0000~9999（不加图标/小数点）
+void LCD_ShowNumber4(uint16_t value)
+{
+    if (value > 9999) value = 9999;
+    uint8_t d0 = (uint8_t)((value / 1000) % 10);
+    uint8_t d1 = (uint8_t)((value / 100)  % 10);
+    uint8_t d2 = (uint8_t)((value / 10)   % 10);
+    uint8_t d3 = (uint8_t)( value          % 10);
+
+    LCD_ShowDigit(0, d0, false);
+    LCD_ShowDigit(1, d1, false);
+    LCD_ShowDigit(2, d2, false);
+    LCD_ShowDigit(3, d3, false);
+}
+// === 电压表专用 ===
+// scaled_2dp = |V| * 100（四舍五入），范围 0..1200（外部已经钳位到 12.00）
+// - 本函数按 "xx.xx" 显示，**小数点放在第 2 位与第 3 位之间**（“中间那个”）
+// - 第二位：强制点亮 V 符号(AMP_ADDR: bit 0x4)，并叠加 DP/负号/溢出图标。
+void LCD_ShowVoltage_4digits(uint16_t scaled_2dp, bool show_minus, bool overflow)
+{
+    if (scaled_2dp > 9999) scaled_2dp = 9999;
+
+    uint8_t d0 = (uint8_t)((scaled_2dp / 1000) % 10);
+    uint8_t d1 = (uint8_t)((scaled_2dp / 100)  % 10);
+    uint8_t d2 = (uint8_t)((scaled_2dp / 10)   % 10);
+    uint8_t d3 = (uint8_t)( scaled_2dp          % 10);
+
+    // 位0：千位。为美观，千位=0时可留空（你要保留前导零就改成 LCD_ShowDigit(0, d0, false)）
+    if (d0 == 0) {
+        uint8_t z = 0x00; HT1621_WriteData(FIRST_L_ADDR, &z, 1);
+    } else {
+        LCD_ShowDigit(0, d0, false);
+    }
+
+    // 位1：百位 + V 符号 + 中间小数点 + 负号/溢出标志
+    // 先拿到“数字 0~9”的段
+    uint8_t nibL = kDigitMap_7seg[d1][0];
+    uint8_t nibR = kDigitMap_7seg[d1][1];
+
+    // 叠加图标：
+    // nibL |= 0x4;            // AMP_ADDR(=SECOND_L_ADDR) 的 V 符号 bit
+    nibR |= 0x8;            // 第二位的小数点 DP（“中间那个小数点”）
+    // if (show_minus) nibR |= 0x1;   // MILLI_AMP_ADDR 的负号 bit
+    // if (overflow)   nibR |= 0x4;   // MILLI_AMP_ADDR 的溢出 bit
+
+    LCD_WriteDigitPair(SECOND_L_ADDR, nibL, nibR);
+
+    // 位2、位3：十位、个位
+    LCD_ShowDigit(2, d2, false);
+    LCD_ShowDigit(3, d3, false);
+
+    // 叠加图标：
+    uint8_t data[1] = {0};
+    if (show_minus) data[0] |= 0x1;   // MILLI_AMP_ADDR 的负号 bit
+    if (overflow)   data[0] |= 0x4;   // MILLI_AMP_ADDR 的溢出 bit
+    HT1621_WriteData(MILLI_AMP_ADDR, data, 1);// MILLI_AMP_ADDR 的负号/溢出 bit
+    data[0] = 0x04;
+    HT1621_WriteData(AMP_ADDR, data, 1);// AMP_ADDR 的 V 符号 bit
+
+}
+void HT1621_Clear(void) {
+    uint8_t z[16];
+    for (int i = 0; i < 16; ++i) z[i] = 0x00;   // 覆盖 0x00..0x1F 共 32 个 4bit
+    HT1621_WriteData(0x00, z, 16);
 }
