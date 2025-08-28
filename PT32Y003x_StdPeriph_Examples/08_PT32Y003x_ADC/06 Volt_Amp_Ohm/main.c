@@ -760,7 +760,6 @@ static void lcd_show_voltage_pos(float v, int overflow)
 {
     // 四舍五入到 2 位小数并转 0.01V 的整数
     uint16_t scaled = (uint16_t)(v * 100.0f + 0.5f);
-    if (scaled > 9999) scaled = 9999;
     // 第二位加 V & DP；正电压不加负号
     LCD_ShowVoltage_4digits(scaled, false, overflow ? true : false);
 }
@@ -768,10 +767,8 @@ static void lcd_show_voltage_neg(float v, int overflow)
 {
     float av = (v < 0) ? -v : v;     // 取绝对值显示
     uint16_t scaled = (uint16_t)(av * 100.0f + 0.5f);
-    if (scaled > 9999) scaled = 9999;
     // 第二位加 V & DP & 负号；如溢出再加溢出标
     LCD_ShowVoltage_4digits(scaled, true, overflow ? true : false);
-
 }
 
 /* ========== 初始化：不重采“1V基准”，使用开机时的 g_v1_ref ========== */
@@ -797,14 +794,15 @@ void VoltTask_Update(void)
     // 对应换算公式是 ( vout - 0.9983 ) * 10000.0 / 379.2
     float dv = V_DV(v_raw);
     float v_in  = Volt_From_DV(dv);    // 真实输入（V，带正负号）
-
+    
+    int ovf;
     // 3) 上/下限钳位与显示
     if (v_in >= 0.0f) {
-        int ovf = (v_in > VOLT_MAX_V);
+        ovf = (v_in > VOLT_MAX_V);
         float v_disp = ovf ? VOLT_MAX_V : v_in;
         lcd_show_voltage_pos(v_disp, ovf);
     } else {
-        int ovf = (v_in < VOLT_MIN_V);
+        ovf = (v_in < VOLT_MIN_V);
         float v_disp = ovf ? VOLT_MIN_V : v_in;
         lcd_show_voltage_neg(v_disp, ovf);
     }
@@ -866,6 +864,7 @@ void AmpTask_Update(void)
             g_amp.st     = AMP_S_MEASURE_A;
             LOGS("stay in A range (PA2=0)\r\n");
         }
+        // TODO: 判断A和mA选择图标和小数点
         break;
 
     case AMP_S_MEASURE_mA:
@@ -900,10 +899,21 @@ void AmpTask_Update(void)
             LOGS("OVER: >=2.501A\r\n");
         } else {
             LOGF("I=%dA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
-
         }
         break;
     }
+    if (g_amp.st == AMP_S_MEASURE_A||g_amp.st == AMP_S_MEASURE_mA)
+    {
+        // 假设 g_amp.iamp = 最近一次安培值（单位 A，可能为负）
+        float iA = g_amp.iamp;
+        bool neg = (iA < 0.0f);
+        float ai = neg ? -iA : iA;
+
+        // 例：2.500A 是上限
+        bool ovf = (ai > 2.500f);
+        if (ovf) ai = 2.500f;
+    }
+    
 }
 #pragma endregion
 #pragma region 欧姆表业务逻辑
@@ -955,6 +965,7 @@ void OhmTask_Update(void)
             g_ohm.range = RANGE_MOHM;  set_range_pins(g_ohm.range); LOGS("range: M\r\n");
         }
         g_ohm.st = OHM_S_MEASURE;
+        // TODO: 选择图标和小数点位置
         break;
 
     case OHM_S_MEASURE: {
@@ -996,6 +1007,25 @@ void OhmTask_Update(void)
             // lcd_show_overflow(g_ohm.range);
         } else {
             lcd_show_ohms(rx, g_ohm.range);
+        }
+
+        uint16_t scaled; uint8_t dp_mask; // 档位已在你的状态机里判好
+        switch (g_ohm.range) {
+        case RANGE_OHM:   // 000.0~999.9 Ω
+            if (rx > 999.9f) { /*溢出处理*/ }
+            scaled = (uint16_t)(rx * 10.0f + 0.5f);
+            dp_mask = (1u<<2);
+            break;
+        case RANGE_KOHM:  // 00.00~99.99 kΩ
+            if (rx > 99990.0f) { /*溢出处理*/ }
+            scaled = (uint16_t)((rx/1000.0f) * 100.0f + 0.5f);
+            dp_mask = (1u<<1);
+            break;
+        default:          // RANGE_MOHM：00.00~99.99 MΩ
+            if (rx > 10000000.0f) { /*溢出处理*/ }
+            scaled = (uint16_t)((rx/1000000.0f) * 100.0f + 0.5f);
+            dp_mask = (1u<<1);
+            break;
         }
         break;
     }

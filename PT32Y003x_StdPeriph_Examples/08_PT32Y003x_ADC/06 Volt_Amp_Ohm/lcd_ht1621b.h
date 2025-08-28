@@ -6,26 +6,35 @@
 #include "PT32Y003x.h"
 #include "PT32Y003x_gpio.h"
 #include "delay.h"
-// #include <string.h>
-#define HALF_BAT_ADDR           0x14
-#define FULL_BAT_ADDR           0x13
-#define AMP_ADDR                0x12
-#define MILLI_AMP_ADDR          0x11
-#define FOURTH_R_ADDR           0x10
-#define FOURTH_L_ADDR           0x0F
-#define THIRD_R_ADDR            0x0E
-#define THIRD_L_ADDR            0X0D
-#define SECOND_R_ADDR           0x0C
-#define SECOND_L_ADDR           0x0B
-#define FIRST_R_ADDR            0x0A
-#define FIRST_L_ADDR            0x09
 
-#define DISPLAY_ALARM           0x04
+#define ADDR_BAT50_BAT25_HZ_MOHM 0x14
+#define ADDR_BAT100_BAT75        0x13
+#define ADDR_AMPA_VOLT_OHM_KOHM  0x12
+#define ADDR_AMPMA_OVERF_ALR_NEG 0x11
+#define ADDR_FOURTH_R            0x10
+#define ADDR_FOURTH_L            0x0F
+#define ADDR_THIRD_R             0x0E
+#define ADDR_THIRD_L             0X0D
+#define ADDR_SECOND_R            0x0C
+#define ADDR_SECOND_L            0x0B
+#define ADDR_FIRST_R             0x0A
+#define ADDR_FIRST_L             0x09
 
-#define DISPLAY_MOhm            0x01
-#define DISPLAY_HZ				0x02
-#define DISPLAY_25P_BAT		    0x04
-#define DISPLAY_50P_BAT         0x08
+#define ICON_NEG                 0x01
+#define ICON_OVERF				 0x04
+
+#define ICON_VOLT		         0x04
+#define ICON_OHM		         0x02
+#define ICON_AMP_A		         0x08
+#define ICON_AMP_MA              0x08
+#define ICON_OHM_KO		         0x01
+#define ICON_OHM_MO		         0x01
+
+#define ICON_BAT_25              0x04
+#define ICON_BAT_50              0x08
+#define ICON_BAT_75              0x04
+#define ICON_BAT_100             0x08
+#define ICON_BAT_BROAD           0x02
 
 // CS_ PB5 WR_ PB4 DATA PC3
 #define LCD_CS_HIGH()     GPIO_SetBits(GPIOB, GPIO_Pin_5)
@@ -47,4 +56,5 @@ void LCD_ShowNumber4(uint16_t value);
 void LCD_Clear4Digits(void);
 // 供电压表专用：一次性把 4 位+图标写进去
 void LCD_ShowVoltage_4digits(uint16_t scaled_2dp, bool show_minus, bool overflow);
+void LCD_SegWalkTest(void);
 #endif
