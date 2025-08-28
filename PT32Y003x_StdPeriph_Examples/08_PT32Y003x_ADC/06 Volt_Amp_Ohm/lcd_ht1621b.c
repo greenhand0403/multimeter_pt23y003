@@ -61,7 +61,6 @@ void HT1621_WriteData(uint8_t addr, const uint8_t *data, uint8_t lenBytes)
         HT1621_Write4_LSB(b & 0x0F);     // 低 4 位 -> 地址 addr
         HT1621_Write4_LSB(b >> 4);       // 高 4 位 -> 地址 addr+1
     }
-
     LCD_CS_HIGH();
 }
 
@@ -160,59 +159,41 @@ static bool last_minus = false;
 static bool last_ovf   = false;
 // === 电压表专用 ===
 // scaled_2dp = |V| * 100（四舍五入），范围 0..1200（外部已经钳位到 12.00）
-// - 本函数按 "xx.xx" 显示，**小数点放在第 2 位与第 3 位之间**（“中间那个”）
-// - 第二位：强制点亮 V 符号(AMP_ADDR: bit 0x4)，并叠加 DP/负号/溢出图标。
-void LCD_ShowVoltage_4digits(uint16_t scaled_2dp, bool show_minus, bool overflow)
+// - 第 dot_pos 位（从左数起1开始）：点亮小数点
+void LCD_Show_digits(uint16_t scaled_2dp, uint8_t dot_pos)
 {
     if (scaled_2dp > 9999) scaled_2dp = 9999;
 
     uint8_t d0 = (uint8_t)((scaled_2dp / 1000) % 10);
     uint8_t d1 = (uint8_t)((scaled_2dp / 100)  % 10);
     uint8_t d2 = (uint8_t)((scaled_2dp / 10)   % 10);
-    uint8_t d3 = (uint8_t)( scaled_2dp          % 10);
+    uint8_t d3 = (uint8_t)( scaled_2dp         % 10);
 
     // 位0：千位。为美观，千位=0时可留空（你要保留前导零就改成 LCD_ShowDigit(0, d0, false)）
-    if (d0 == 0) {
-        uint8_t z = 0x00;
-        HT1621_WriteData(ADDR_FIRST_L, &z, 1);
-    } else {
-        LCD_ShowDigit(0, d0, false);
-    }
+    // if (d0 == 0) {
+        // uint8_t z = 0x00;
+        // HT1621_WriteData(ADDR_FIRST_L, &z, 1);
+    // } else {
+        LCD_ShowDigit(0, d0, dot_pos==1);
+    // }
 
     // 位1：百位 + V 符号 + 中间小数点 + 负号/溢出标志
     // 先拿到“数字 0~9”的段
-    uint8_t nibL = kDigitMap_7seg[d1][0];
-    uint8_t nibR = kDigitMap_7seg[d1][1];
-    nibR |= 0x8;            // 第二位的小数点 DP（“中间那个小数点”）
-    LCD_WriteDigitPair(ADDR_SECOND_L, nibL, nibR);
-
+    // uint8_t nibL = kDigitMap_7seg[d1][0];
+    // uint8_t nibR = kDigitMap_7seg[d1][1];
+    // nibR |= 0x8;            // 第二位的小数点 DP（“中间那个小数点”）
+    // LCD_WriteDigitPair(ADDR_SECOND_L, nibL, nibR);
+    LCD_ShowDigit(1, d1, dot_pos==2);
     // 位2、位3：十位、个位
-    LCD_ShowDigit(2, d2, false);
+    LCD_ShowDigit(2, d2, dot_pos==3);
+
     LCD_ShowDigit(3, d3, false);
+}
 
-    // 叠加图标：
-    uint8_t data = ICON_VOLT<<4;// V符号总是显示
-
-    // 负号是否显示
-    if (show_minus)
-    {
-        data |= ICON_NEG;
-    }
-    else
-    {
-        data &= 0xFF-ICON_NEG;
-    }
-    // 溢出符号是否显示
-    if (overflow)   {
-        data |= ICON_OVERF;
-    }
-    else
-    {
-        data &= 0xFF-ICON_OVERF;
-    }
-    // 一次写8bit数据，4bit一组，低地址溢出和负号，
-
-    HT1621_WriteData(ADDR_AMPMA_OVERF_ALR_NEG, &data, 1);// MILLI_AMP_ADDR 的负号/溢出 bit
+void LCD_ShowIcon(uint8_t icon1, uint8_t icon2)
+{
+    HT1621_WriteData(ADDR_AMPMA_OVERF_ALR_NEG, &icon1, 1);
+    HT1621_WriteData(ADDR_BAT100_BAT75, &icon2, 1);
 }
 
 // 遍历 SEG9~SEG20（0x09~0x14），每次只点亮一个段，停 5 秒

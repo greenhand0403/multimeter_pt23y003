@@ -79,7 +79,7 @@ extern volatile uint8_t  poweroff_request;   // 置 1 后在安全点 deep_sleep()
 typedef enum { RUN_MODE_NORMALWORK = 0, RUN_MODE_DEEPSLEEP = 1, RUN_MODE_WAKEUP = 2} run_mode_t;
 extern run_mode_t g_run_mode;
 // 全局（或静态）加一个锁
-static uint8_t s_lock_until_release = 0;
+uint8_t s_lock_until_release = 0;
 void TIM2_Handler(void)
 {
   if (TIM_GetFlagStatus(TIM2, TIM_FLAG_ARF) != RESET)

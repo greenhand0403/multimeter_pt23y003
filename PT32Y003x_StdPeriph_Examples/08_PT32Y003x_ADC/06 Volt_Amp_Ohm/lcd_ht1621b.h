@@ -54,7 +54,8 @@ void HT1621_SendCommand(uint8_t cmd);
 void LCD_ShowDigit(uint8_t pos, uint8_t val, bool dp);
 void LCD_ShowNumber4(uint16_t value);
 void LCD_Clear4Digits(void);
-// 供电压表专用：一次性把 4 位+图标写进去
-void LCD_ShowVoltage_4digits(uint16_t scaled_2dp, bool show_minus, bool overflow);
+
+void LCD_Show_digits(uint16_t scaled_2dp, uint8_t dot_pos);
+void LCD_ShowIcon(uint8_t icon1, uint8_t icon2);
 void LCD_SegWalkTest(void);
 #endif
