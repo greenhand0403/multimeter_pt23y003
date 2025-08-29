@@ -11,6 +11,7 @@
 #include <PT32Y003x_pwr.h>
 #include <PT32Y003x_pwm.h>
 #include <PT32Y003x_exti.h>
+#include <string.h>
 
 #pragma region ºê¶¨Òå¡¢È«¾Ö±äÁ¿ºÍ¹¤¾ßº¯ÊýÅäÖÃ
 char log_buffer[64];  // ÓÃÓÚ´òÓ¡ÈÕÖ¾ ×ã¹»´æ´¢¸ñÊ½»¯×Ö·û´®
@@ -38,10 +39,19 @@ volatile uint8_t g_require_release_before_poweroff = 0; // 0=Î´ÒªÇó, 1=ÒªÇóÏÈËÉÊ
 extern uint8_t s_lock_until_release; // ËÉÊÖËø
 volatile uint8_t g_run_mode = RUN_MODE_NORMALWORK;   // Ä¬ÈÏ´¦ÓÚÐÝÃßÄ£Ê½
 // Idle ¼à¿Ø£¨120s×Ô¶¯ÐÝÃß¹¦ÄÜ£©
-static uint32_t idle_last_ms = 0;
-static float last_value   = 0.0f;
-#define IDLE_WINDOW_MS   (60000U)   // 60 s
-#define CHANGE_THRESHOLD (0.10f)     // 10%
+typedef struct {
+    float     last_v;
+    uint8_t   have_last;
+    uint8_t   quiet;          // 1=µ±Ç°´¦ÓÚ¡°±ä»¯ÂÊ<ãÐÖµ¡±µÄ°²¾²Çø
+    uint32_t  quiet_since_ms; // ½øÈë°²¾²ÇøµÄÊ±¼ä´Á
+} idle_tracker_t;
+
+volatile idle_tracker_t g_idle = {0};
+
+#define IDLE_WINDOW_MS        (120000U)  // 2min
+#define CHANGE_THRESHOLD_ON   (0.10f)     // ½øÈë°²¾²ÅÐ¶¨ãÐÖµ£¨10%£©
+#define CHANGE_THRESHOLD_OFF  (0.11f)     // ÍË³ö°²¾²µÄ»Ø²îãÐÖµ£¨11%£ºÇáÎ¢³ÙÖÍ£¬¿¹¶¶£©
+
 // ³¤°´°´¼ü³õÊ¼»¯ºÍ°´¼ü»½ÐÑ
 // ¿Éµ÷²ÎÊý
 const uint32_t PWR_DEBOUNCE_MS = 200U;
@@ -128,8 +138,7 @@ static struct LCD_BUF_STRUCT g_lcd_buf;
 // === Äã¿ÉÒÔ°´Ð¾Æ¬ÊÖ²áµ÷ÕûÕâÒ»ÐÐ ===
 #define BATT_ADC_CHANNEL      ADC_Channel_7   // ¡ï PC4 ¶ÔÓ¦µÄ ADC Í¨µÀ£¨Èô²»¶Ô£¬Çë¸Ä£©
 #define BATT_SAMPLE_PERIOD_MS 1000U           // ¡ï Ã¿ÃëÒ»´Î
-#define BATT_SAMPLES_N        16              // ¡ï Ã¿´ÎÆ½¾ù 16 µã
-#define BATT_ALPHA            0.3f            // ¡ï ¼òµ¥Ò»½×ÂË²¨ÏµÊý£¨0.0~1.0£©
+#define BATT_SAMPLES_N        3
 // ¡ï µçÁ¿·ÖµµãÐÖµ£¨°´Äã¸øµÄÃÅÏÞ£¬µ¥Î»£ºV£¬Õë¶ÔPC4²âµÃµÄµçÑ¹£©
 #define BATT_TH_4             1.55f
 #define BATT_TH_3             1.40f
@@ -183,6 +192,44 @@ static struct {
 } g_ohm;
 // ===== ¹¦ÄÜº¯ÊýÉùÃ÷ =====
 void first_init(void);
+void deep_sleep(void);
+static inline void Idle_OnDisplaySample(float v, uint32_t now_ms)
+{
+    // ·ÀÖ¹¡°Ê±ÖÓ»Ø²¦¡±µ¼ÖÂ¸º²îÖµ
+    if ((int32_t)(now_ms - g_idle.quiet_since_ms) < 0) {
+        g_idle.quiet_since_ms = now_ms;
+    }
+
+    if (!g_idle.have_last) {
+        g_idle.last_v = v;
+        g_idle.have_last = 1;
+        g_idle.quiet = 1;                // ³õÊ¼ÈÏÎª½øÈë°²¾²
+        g_idle.quiet_since_ms = now_ms;
+        return;
+    }
+
+    float denom = fabsf(g_idle.last_v);
+    if (denom < 0.10f) denom = 0.10f;    // ·À 0/¼«Ð¡·ÖÄ¸£»°´ÄãµÄÁ¿¸Ù¸ø¸öºÏÀíÏÂÏÞ
+    float diff = fabsf(v - g_idle.last_v) / denom;
+    g_idle.last_v = v;
+
+    // ³ÙÖÍÅÐ¶Ï£º<10% Î¬³Ö°²¾²£»>11% ÈÏÎª»îÔ¾£»ÖÐ¼äÇø±£³ÖÔ­×´Ì¬
+    if (diff > CHANGE_THRESHOLD_OFF) {
+        g_idle.quiet = 0;
+        g_idle.quiet_since_ms = now_ms;  // »îÔ¾¡úÖØÖÃ¼ÆÊ±
+    } else if (diff < CHANGE_THRESHOLD_ON) {
+        if (!g_idle.quiet) {
+            g_idle.quiet = 1;            // ¸Õ½øÈë°²¾²¡ú´Ó´Ë¿Ì¿ªÊ¼¼ÆÊ±
+            g_idle.quiet_since_ms = now_ms;
+        }
+        // ÒÑ´¦ÓÚ°²¾²£º¼ì²éÊÇ·ñ´ïµ½ÁË´°¿Ú
+        if (g_idle.quiet &&
+            (now_ms - g_idle.quiet_since_ms) >= IDLE_WINDOW_MS &&
+            g_run_mode == RUN_MODE_NORMALWORK) {
+            deep_sleep();
+        }
+    }
+}
 
 #pragma endregion
 #pragma region ´®¿ÚÇý¶¯
@@ -294,7 +341,7 @@ void ADC_Driver(void)
 
     // £¨¿ÉÑ¡£©Ó²¼þÆ½¾ù
     ADC_AverageTimesConfig(ADC, ADC_AverageTimes_16);
-    ADC_AverageCmd(ADC, ENABLE);
+    // ADC_AverageCmd(ADC, ENABLE);
 
     ADC_Cmd(ADC, ENABLE);
     while(!ADC_GetFlagStatus(ADC, ADC_FLAG_RDY));
@@ -427,7 +474,7 @@ static inline void deep_sleep_close_gpio(void)
         GPIO_Init(GPIOC, &GPIO_InitStructure);
 }
 // ½øÈëÐÝÃß×´Ì¬µÄÂß¼­£¬¹Ø±ÕÍâÉè
-void deep_sleep()
+void deep_sleep(void)
 {
     if(g_run_mode == RUN_MODE_NORMALWORK)
     {
@@ -488,39 +535,12 @@ void deep_sleep()
             }
         }
 
-        idle_last_ms = s_ms_ticks;//ÖØÖÃ±ä»¯ÂÊ<10%µÄ120s¼ÆÊý
+        // idle_last_ms = s_ms_ticks;//ÖØÖÃ±ä»¯ÂÊ<10%µÄ120s¼ÆÊý
 
         LOGF("NORMALWORK ms_ticks=%u\r\n",s_ms_ticks);
 
         // ·µ»ØÕý³£¹¤×÷£¬Çå³ý±êÖ¾Î»£¬´ËÊ±ÐèÒªÔÙ´Îµ÷ÓÃÍòÓÃ±íÍâÉèÅäÖÃº¯Êý
         hadSetMultimeterInit = false;
-    }
-}
-// Ã¿´ÎÓÐÐÂ²âÁ¿Öµ£¨µçÑ¹/µçÁ÷/µç×èÈÎÑ¡Ò»¸ö¡°´ú±íÖµ¡±£©¶¼µ÷ÓÃÒ»´Î
-static void Idle_Update(float cur_value)
-{
-    // ¡ï ·À»Ø²¦£ºÈô s_ms_ticks ±»ÇåÁã/»Ø²¦£¬Ê¹ idle_last_ms ¶ÔÆëµ±Ç°
-    if ((int32_t)(s_ms_ticks - idle_last_ms) < 0) {
-        idle_last_ms = s_ms_ticks;
-    }
-    
-    float base = (last_value == 0.0f) ? 1.0f : last_value;
-    float diff = (cur_value - last_value) / base;
-    if (diff < 0) diff = -diff;
-
-    last_value = cur_value;
-
-    if (diff >= CHANGE_THRESHOLD) {
-        // Çå³ý¿ÕÏÐÊ±¼äÊ±¼ä´Á
-        idle_last_ms = s_ms_ticks;// ÓÐÃ÷ÏÔ±ä»¯ ¡ú ÊÓÎª»îÔ¾
-    }
-    
-    // µ±Ç°Ê±¼ä - ÉÏÒ»´Î¿ÕÏÐÊ±¼ä´Á
-    if ((s_ms_ticks - idle_last_ms) >= IDLE_WINDOW_MS) {
-        LOGF("%d: %d - %d\r\n",g_run_mode,s_ms_ticks,idle_last_ms);
-        if(g_run_mode == RUN_MODE_NORMALWORK) {
-            deep_sleep();
-        }// ½øÈëÉîË¯
     }
 }
 #pragma endregion
@@ -664,7 +684,7 @@ static void lcd_show_ohms(float rx, ohm_range_t r)
     // ÕâÀïÖ»×ö´®¿ÚÊ¾Àý£¬LCD Äã×Ô¼º½Ó
     switch (r)
     {
-        case RANGE_OHM:  LOGF("Ohm: %d \r\n", rx); break;          // 0000~0999¦¸
+        case RANGE_OHM:  LOGF("Ohm: %d \r\n", (int)rx); break;          // 0000~0999¦¸
         case RANGE_KOHM: LOGF("Ohm: %d k\r\n", (int)(rx/10.0f +0.5f)); break; // xx.xx k¦¸
         case RANGE_MOHM: LOGF("Ohm: %d M\r\n", (int)(rx/10000.0f +0.5f)); break;    // xx.xx M¦¸
     }
@@ -676,24 +696,17 @@ static void LCD_DISPLAY_UPDATE(void)
     if ((int32_t)(now - g_lcd_buf.last_update_ms) < 0) return;
     g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
 
-    // ¸üÐÂËÄÎ»Êý×ÖºÍÐ¡ÊýµãÎ»ÖÃ
-    LCD_Show_digits(g_lcd_buf.num4, g_lcd_buf.dotpos);
-    // ¸üÐÂ¶ÔÓ¦µÄ±íµÄÍ¼±ê¡¢¸ººÅ¡¢Òç³öºÍµç³ØµçÁ¿
+    // Çå³ý¸ººÅ/Òç³ö
+    g_lcd_buf.mA_overf_neg_A_V_O_kO &= ~(ICON_NEG|ICON_OVERF);
+    // ¸üÐÂ¶ÔÓ¦µÄ±íµÄÍ¼±ê¡¢¸ººÅ¡¢Òç³ö
     switch (meter_mode)
     {
     case METER_MODE_VOLT:
         if (g_volt.last_v > 0.0f) {
-            // Çå³ý¸ººÅ
-            g_lcd_buf.mA_overf_neg_A_V_O_kO &= 0xFF-ICON_NEG;
             if (g_volt.last_v > VOLT_MAX_V)
             {
                 // ÏÔÊ¾Òç³ö
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
-            }
-            else
-            {
-                // Çå³ýÒç³ö
-                g_lcd_buf.mA_overf_neg_A_V_O_kO &= 0xFF-ICON_OVERF;
             }
         } else {
             g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_NEG;
@@ -701,17 +714,86 @@ static void LCD_DISPLAY_UPDATE(void)
             {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
             }
-            else
-            {
-                g_lcd_buf.mA_overf_neg_A_V_O_kO &= 0xFF-ICON_OVERF;
-            }
         }
         break;
+    case METER_MODE_AMP:
+        // ÏÈÇåµôÁ¿¸ÙÎ»£¨A¡¢mA£©£¬±ÜÃâÉÏÒ»Ä£Ê½²ÐÁô
+        g_lcd_buf.mA_overf_neg_A_V_O_kO &= ~(ICON_AMP_A<<4 | ICON_AMP_MA);
+        // Ê¹ÓÃ¡°Í³Ò»¡±ÏÔÊ¾£ºÊ¼ÖÕÒÔ A Îªµ¥Î»£¬±£Áô 3 Î»Ð¡Êý ¡ú num4=|I|*1000, dotpos=1
+        {
+            float i = g_amp.iamp;                 // ÓÉ²âÁ¿×´Ì¬»ú¸üÐÂ
+            bool neg = (i < 0.0f);
+            float ai = neg ? -i : i;
+
+            if (neg) g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_NEG;
+
+            // ³¬Á¿³Ì£¨ÄãÒÑÓÐ¸÷µµ¼à¿Ø£¬ÕâÀïÔÙ±£Ò»²ã£©
+            switch (g_amp.st)
+            {
+            case AMP_S_MEASURE_mA:
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_MA;
+                break;
+            case AMP_S_MEASURE_A:
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_A;
+                if ((neg && i <= 2.5f) || (i >= 2.5f)){
+                    // ÏÔÊ¾Òç³ö
+                    g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
+                }
+                break;
+            default:
+                break;
+            }
+            g_lcd_buf.dotpos = 1;  // x.xxx
+        }
+        break;
+#ifdef test
+    case METER_MODE_OHM:
+        // ÇåµôµçÑ¹/µçÁ÷/¦¸ÏµÍ¼±ê£¬±£Áôµç³ØÍâ¿ò
+        g_lcd_buf.mA_overf_neg_A_V_O_kO &= ~(ICON_OHM<<4 | ICON_OHM_KO<<4);
+        // µÚ¶þ×Ö½ÚÖÐ£¬½öÇå³ý M¦¸ Î»£¬±ÜÃâ°Ñµç³Ø¸ñ×ÓÇåµô
+        g_lcd_buf.bat_25_50_75_100_MO &= ~(ICON_OHM_MO<<4);
+        {
+            // Å·Ä·ÖµÓÉ OhmTask_Update() Ëã²¢ÅÐµµ£»´Ë´¦½ö¸ºÔð¡°ÏÔÊ¾¸ñÊ½»¯¡±
+            // ÕâÀïÊ¾·¶Ö±½Ó¸ù¾Ý range ºÍ rx ×é³É num4/dotpos£»rx/overflow ÒÑÔÚ×´Ì¬»ú´¦Àí
+            float rx = g_ohm.rx_display; // ÈôÎÞ¸Ã×Ö¶Î£¬¿É°Ñ¼ÆËãºÃµÄ rx ·ÅÈëÈ«¾Ö±äÁ¿¹©´Ë´¦Ê¹ÓÃ
+            ohm_range_t r = g_ohm.range;
+
+            uint32_t scaled = 0;
+            uint8_t dotpos  = 0;
+
+            // ×¢£ºÐ¡ÊýµãÎ»ÖÃÇë²Î¿¼¡°¹æÔò¡±Ò»½Ú
+            if (r == RANGE_OHM) {
+                // 000.0~999.9 ¦¸
+                float val = rx;
+                if (val > 999.9f) { val = 999.9f; g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF; }
+                scaled = (uint32_t)(val * 10.0f + 0.5f);
+                dotpos = 3;                         // xxx.x
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OHM;
+            } else if (r == RANGE_KOHM) {
+                // 00.00~99.99 k¦¸
+                float val_k = rx / 1000.0f;
+                if (val_k > 99.99f) { val_k = 99.99f; g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF; }
+                scaled = (uint32_t)(val_k * 100.0f + 0.5f);
+                dotpos = 2;                         // xx.xx
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= (ICON_OHM | ICON_OHM_KO);
+            } else { // RANGE_MOHM
+                // 00.00~99.99 M¦¸
+                float val_M = rx / 1000000.0f;
+                if (val_M > 99.99f) { val_M = 99.99f; g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF; }
+                scaled = (uint32_t)(val_M * 100.0f + 0.5f);
+                dotpos = 2;                         // xx.xx
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OHM;
+                g_lcd_buf.bat_25_50_75_100_MO |= ICON_OHM_MO; // M¦¸ Í¼±êÔÚµÚ¶þ×Ö½Ú
+            }
+            g_lcd_buf.dotpos = dotpos;
+        }
+        break;
+#endif
     default:
         break;
     }
-    // Çå³ýµç³ØµçÁ¿
-    g_lcd_buf.bat_25_50_75_100_MO &= 0xFF-(ICON_BAT_25<<4|ICON_BAT_50<<4|ICON_BAT_75|ICON_BAT_100);
+    // Çå³ýµç³ØµçÁ¿£¨±£³ÖÍâ¿ò£©
+    g_lcd_buf.bat_25_50_75_100_MO &= ~((ICON_BAT_25 << 4) | (ICON_BAT_50 << 4) | ICON_BAT_75 | ICON_BAT_100);
     // ÏÔÊ¾µç³ØµçÁ¿
     switch (g_batt.level)
     {
@@ -727,6 +809,10 @@ static void LCD_DISPLAY_UPDATE(void)
     default:
         break;
     }
+    // ÓÃADC²É¼¯µÄÖµ×ö¿ÕÏÐ±ä»¯ÂÊ<10%µÄÐÝÃßÅÐ¶Ï
+    Idle_OnDisplaySample(g_adc_pa1_raw, s_ms_ticks);
+    // ¸üÐÂËÄÎ»Êý×ÖºÍÐ¡ÊýµãÎ»ÖÃ
+    LCD_Show_digits(g_lcd_buf.num4, g_lcd_buf.dotpos);
     LCD_ShowIcon(g_lcd_buf.mA_overf_neg_A_V_O_kO, g_lcd_buf.bat_25_50_75_100_MO);
 }
 #pragma endregion
@@ -734,15 +820,13 @@ static void LCD_DISPLAY_UPDATE(void)
 // ¡ï PC4 ½Ó ADC£º´ò¿ªÄ£Äâ¸´ÓÃ + ÊäÈëÎÞÉÏÏÂÀ­
 static void Battery_GPIO_Init(void)
 {
-    GPIO_AnalogRemapConfig(AFIOC, GPIO_Pin_4, ENABLE);  // PC4¡úADC
     GPIO_InitTypeDef gi;
     gi.GPIO_Mode = GPIO_Mode_In;
     gi.GPIO_Pin  = GPIO_Pin_4;
     gi.GPIO_Pull = GPIO_Pull_NoPull;
     GPIO_Init(GPIOC, &gi);
-
-    // ³£¾ÃÏÔÊ¾µç³ØÍâ¿ò
-    g_lcd_buf.bat_25_50_75_100_MO |= ICON_BAT_BROAD;
+    GPIO_DigitalRemapConfig(AFIOC,GPIO_Pin_4,AFIO_AF_0,DISABLE);
+    GPIO_AnalogRemapConfig(AFIOC, GPIO_Pin_4, ENABLE);  // PC4¡úADC
 }
 
 static int Battery_LevelFromV(float v)
@@ -756,9 +840,11 @@ static int Battery_LevelFromV(float v)
 
 void BatteryTask_Init(void)
 {
-    Battery_GPIO_Init();
     g_batt.next_ms = s_ms_ticks;
     g_batt.level   = -1;     // Î´¶¨¼¶
+
+    // ³£¾ÃÏÔÊ¾µç³ØÍâ¿ò
+    g_lcd_buf.bat_25_50_75_100_MO |= ICON_BAT_BROAD;
 }
 
 void BatteryTask_Update(void)
@@ -772,11 +858,10 @@ void BatteryTask_Update(void)
     {
         ADC_ScanOnce();
         adc_sum += g_adc_pc4_raw;
-        delay_ms(2); // ²ÉÑù¼ä¸ô
     }
     g_adc_pc4_raw = adc_sum / BATT_SAMPLES_N;
-    // ×ª³ÉµçÑ¹
-    float v = ADC_TO_V(g_adc_pc4_raw);
+    // ×ª³ÉµçÑ¹ µç³Ø1.5V ×öÁË·ÖÑ¹
+    float v = 2 * ADC_TO_V(g_adc_pc4_raw);
 
     int lvl = Battery_LevelFromV(v);
     
@@ -843,6 +928,7 @@ void VoltTask_Init(void)
 {
     g_volt.next_ms = s_ms_ticks;  // Á¢¼´¿ÉÒÔ¸üÐÂ
     g_volt.last_v  = 0.0f;
+
     // ¹Ì¶¨ÏÔÊ¾·ûºÅ V ºÍÖÐ¼äµÄÐ¡Êýµã
     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_VOLT<<4;
     g_lcd_buf.dotpos = 2;
@@ -864,16 +950,14 @@ void VoltTask_Update(void)
         delay_ms(1);
     }
     float v_raw = v_sum / AVG_N;
-    LOGF("ticks=%u v=%d idle=%d\r\n", s_ms_ticks,(int)(v_raw*1000.0f+0.5f),idle_last_ms);
+    // LOGF("ticks=%u v=%d idle=%d\r\n", s_ms_ticks,(int)(v_raw*1000.0f+0.5f),idle_last_ms);
 
     // ¶ÔÓ¦»»Ëã¹«Ê½ÊÇ ( vout - 0.9983 ) * 10000.0 / 379.2
     float dv = V_DV(v_raw);
-    float v_in  = Volt_From_DV(dv);    // ÕæÊµÊäÈë£¨V£¬´øÕý¸ººÅ£©
+    g_volt.last_v = Volt_From_DV(dv);    // ÕæÊµÊäÈë£¨V£¬´øÕý¸ººÅ£©
 
     // ËÄÉáÎåÈëµ½ 2 Î»Ð¡Êý²¢×ª 0.01V Îªµ¥Î»µÄÕûÊý£¬¶ª¸øÊýÂë¹Ü½á¹¹Ìå»º´æÏÔÊ¾
     g_lcd_buf.num4 = (uint16_t)(g_volt.last_v * 100.0f + 0.5f);
-
-    g_volt.last_v = v_in;
 }
 #pragma endregion
 #pragma region µçÁ÷±íÒµÎñÂß¼­
@@ -923,7 +1007,6 @@ void AmpTask_Update(void)
             g_amp.st     = AMP_S_MEASURE_A;
             LOGS("stay in A range (PA2=0)\r\n");
         }
-        // TODO: ÅÐ¶ÏAºÍmAÑ¡ÔñÍ¼±êºÍÐ¡Êýµã
         break;
 
     case AMP_S_MEASURE_mA:
@@ -940,8 +1023,8 @@ void AmpTask_Update(void)
             g_amp.st = AMP_S_IDLE_WAIT;
             break;
         }
-
-        // ÏÔÊ¾£¨LCD ×Ô½ÓÈë£©
+        // ²»ÏÔÊ¾Ð¡Êýµã
+        g_lcd_buf.dotpos = 0;
         LOGF("I=%dmA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
         break;
 
@@ -954,25 +1037,21 @@ void AmpTask_Update(void)
             break;
         }
 
-        if (g_amp.iamp >= 2.501f) {
-            LOGS("OVER: >=2.501A\r\n");
+        if (g_amp.iamp >= 2.5f) {
+            LOGS("OVER: >=2.5A\r\n");
+            g_amp.iamp = 2.5;
+        }else if (g_amp.iamp <= -2.5f) {
+            LOGS("OVER: <=-2.5A\r\n");
+            g_amp.iamp = -2.5;
         } else {
             LOGF("I=%dA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
         }
+        // ÏÔÊ¾Ð¡Êýµã
+        g_lcd_buf.dotpos = 1;
         break;
     }
-    if (g_amp.st == AMP_S_MEASURE_A||g_amp.st == AMP_S_MEASURE_mA)
-    {
-        // ¼ÙÉè g_amp.iamp = ×î½üÒ»´Î°²ÅàÖµ£¨µ¥Î» A£¬¿ÉÄÜÎª¸º£©
-        float iA = g_amp.iamp;
-        bool neg = (iA < 0.0f);
-        float ai = neg ? -iA : iA;
-
-        // Àý£º2.500A ÊÇÉÏÏÞ
-        bool ovf = (ai > 2.500f);
-        if (ovf) ai = 2.500f;
-    }
-    
+    // ×ª 0.001A Îªµ¥Î»µÄÕûÊý£¬¶ª¸øÊýÂë¹Ü½á¹¹Ìå»º´æÏÔÊ¾
+    g_lcd_buf.num4 = (uint16_t)(g_amp.iamp * 1000.0f + 0.5f);
 }
 #pragma endregion
 #pragma region Å·Ä·±íÒµÎñÂß¼­
@@ -1015,7 +1094,7 @@ void OhmTask_Update(void)
             g_ohm.range = RANGE_MOHM;  set_range_pins(g_ohm.range); LOGS("range: M\r\n");
         }
         g_ohm.st = OHM_S_MEASURE;
-        // TODO: Ñ¡ÔñÍ¼±êºÍÐ¡ÊýµãÎ»ÖÃ
+        // TODO: Ñ¡ÔñÍ¼±ê
         break;
 
     case OHM_S_MEASURE: {
@@ -1077,6 +1156,7 @@ void OhmTask_Update(void)
             dp_mask = (1u<<1);
             break;
         }
+
         break;
     }
     }
@@ -1108,21 +1188,26 @@ void check_meter_mode(void)
 
 void MultimeterInit()
 {
+    Battery_GPIO_Init();
     ADC_Driver();// PA1 ºÍ PC4 ×÷Îª ADC ÊäÈë
 
-    // if (!hadSetMultiMeterMode)
+    if (!hadSetMultiMeterMode)
     {
         LOGS("Meter IO Init");
         // ÅäÖÃ PA2 PA3 ÊäÈëÄ£Ê½ ¸ù¾ÝÇé¿öÑ¡ÔñµçÁ÷±í¡¢µçÑ¹±í»òÅ·Ä·±í
         MultiMeterIOOutputConfig(false);
         // init state: PA2 PA3 , LOW LOW mean VoltTest, LOW HIGH mean AmpTest, HIGH HIGH mean OhmTest
         check_meter_mode();
-        // hadSetMultiMeterMode = true;
+        hadSetMultiMeterMode = true;
     }
 
 	BuzzerInit();
 
     LCDInit();
+    // »½ÐÑ/ÖØ³õÊ¼»¯ºó£º¸´Î»¿ÕÏÐ¼ì²âÆ÷ ºÍ LCDÏÔÊ¾»º³åÇø
+    memset((void*)&g_idle, 0, sizeof(g_idle));
+    memset((void*)&g_lcd_buf, 0, sizeof(g_lcd_buf));
+
     BatteryTask_Init();
 
     switch (meter_mode)
@@ -1199,8 +1284,6 @@ int main (void)
                 LOGS("wait to poweroff");
                 deep_sleep();
             }
-            // ±ä»¯ÂÊ <10% ×Ô¶¯ÐÝÃß
-            Idle_Update(g_adc_pa1_raw);
             delay_ms(20);
         }
         else if (g_run_mode == RUN_MODE_DEEPSLEEP)
