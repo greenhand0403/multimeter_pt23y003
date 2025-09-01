@@ -219,3 +219,10 @@ void LCD_SegWalkTest(void)
         }
     }
 }
+void LCD_AllOn(void)
+{
+    // ¸²¸Ç 0x00..0x1F£¨32¡Á4bit£©¡ú È«¶ÎµãÁÁ
+    uint8_t ff[16];
+    for (int i = 0; i < 16; ++i) ff[i] = 0xFF;
+    HT1621_WriteData(0x00, ff, 16);
+}

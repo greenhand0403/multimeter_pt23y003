@@ -58,4 +58,5 @@ void LCD_Clear4Digits(void);
 void LCD_Show_digits(uint16_t scaled_2dp, uint8_t dot_pos);
 void LCD_ShowIcon(uint8_t icon1, uint8_t icon2);
 void LCD_SegWalkTest(void);
+void LCD_AllOn(void);
 #endif

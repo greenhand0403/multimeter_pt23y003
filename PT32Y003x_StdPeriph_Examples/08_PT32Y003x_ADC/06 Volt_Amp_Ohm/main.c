@@ -54,8 +54,8 @@ volatile idle_tracker_t g_idle = {0};
 
 // 长按按键初始化和按键唤醒
 // 可调参数
-const uint32_t PWR_DEBOUNCE_MS = 200U;
-const uint32_t PWR_LONGPRESS_MS = 2000U;
+const uint32_t PWR_DEBOUNCE_MS = 90U;
+const uint32_t PWR_LONGPRESS_MS = 900U;
 const uint32_t POSTWAKE_LONGPRESS_TIMEOUT = 5000U;
 
 // 由 TIM2 每 10ms 扫描用到的计数
@@ -68,7 +68,7 @@ typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } mete
 static meter_mode_t meter_mode = -1;
 // ===== 开机“1V偏置” =====
 // 无负载时 PA1 的基准电压（零点，可标定）
-static float   g_v1_ref   = 1.0000f;  // 开机测到的“1V”偏置（例如 0.9973）
+static float   g_v1_ref   = 0.9932f;  // 开机测到的“1V”偏置（例如 0.9973）
 
 // 统一的“去偏置”助手：把原始电压换算成相对 1V 的差值 代表第二级运放的输入电压 便于后续计算
 static inline float V_DV(float v_raw) { return v_raw - g_v1_ref; }
@@ -157,7 +157,7 @@ static struct {
 #ifndef K_VOLT_SLOPE
 // 把“相对1V的差值(dv)”换算成输入端电压（单位: V）
 // 例：若你实测 9V -> dv≈0.682V，则 K≈9/0.682 ≈ 13.200
-#define K_VOLT_SLOPE            (10000.0f/380.6f)
+#define K_VOLT_SLOPE            (10000.0f/379.6f)
 #endif
 
 // 是否做上/下限钳位（例如 0~12V）
@@ -480,7 +480,7 @@ void deep_sleep(void)
     {
         // 休眠提示音
         PWM_Cmd(TIM1, ENABLE);
-        delay_ms(50);
+        delay_ms(30);
         PWM_Cmd(TIM1, DISABLE);
 
         HT1621_Clear();
@@ -489,7 +489,7 @@ void deep_sleep(void)
         // 等待PC5按键松开
         while (GPIO_ReadDataBit(GPIOC,GPIO_Pin_5)==0)
         {
-            delay_ms(20);
+            delay_ms(10);
         }
 
         TIM2_ENABLE(false);
@@ -696,25 +696,33 @@ static void LCD_DISPLAY_UPDATE(void)
 
     // 清除负号/溢出
     g_lcd_buf.mA_overf_neg_A_V_O_kO &= ~(ICON_NEG|ICON_OVERF);
+    uint32_t scaled = 0;
+    uint8_t dotpos  = 0;
     // 更新对应的表的图标、负号、溢出
     switch (meter_mode)
     {
     case METER_MODE_VOLT:
-        if (g_volt.last_v > 0.0f) {
+        if ( g_volt.last_v > 0.0f) {
+            scaled = (uint16_t)(g_volt.last_v * 100.0f + 0.5f);
             if (g_volt.last_v >= VOLT_MAX_V)
             {
                 // 显示溢出
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
+                scaled = 1200;
             }
         } else {
+            // 负电压有零点漂移+4
+            scaled = (uint16_t)(g_volt.last_v * -100.0f + 0.5f)+4;
             g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_NEG;
             if (g_volt.last_v <= VOLT_MIN_V)
             {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
+                scaled = 1200;
             }
         }
+        dotpos = 2;
         // 空闲变化率<10%的休眠判断
-        Idle_OnDisplaySample(g_volt.last_v, s_ms_ticks);
+        Idle_OnDisplaySample(scaled, s_ms_ticks);
         break;
     case METER_MODE_AMP:
         // 先清掉量纲位（A、mA），避免上一模式残留
@@ -753,9 +761,6 @@ static void LCD_DISPLAY_UPDATE(void)
             float rx = g_ohm.rx_display;
             ohm_range_t r = g_ohm.range;
 
-            uint32_t scaled = 0;
-            uint8_t dotpos  = 0;
-
             // 注：小数点位置请参考“规则”一节
             if (r == RANGE_OHM) {
                 // 0000~0510 Ω
@@ -780,8 +785,6 @@ static void LCD_DISPLAY_UPDATE(void)
                 dotpos = 2;                         // xx.xx
                 g_lcd_buf.bat_25_50_75_100_MO |= ICON_OHM_MO<<4; // MΩ 图标在第二字节
             }
-            g_lcd_buf.dotpos = dotpos;
-
              // 溢出与蜂鸣器示例（<51Ω响）
             bool overflow = false;
             // if (g_ohm.range == RANGE_OHM   && rx >  999.9f)     overflow = true;
@@ -790,8 +793,9 @@ static void LCD_DISPLAY_UPDATE(void)
             if (overflow) {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO|=ICON_OVERF;
             } else {
-                g_lcd_buf.mA_overf_neg_A_V_O_kO&=0xFF-ICON_OVERF;
+                g_lcd_buf.mA_overf_neg_A_V_O_kO&=~ICON_OVERF;
             }
+            Idle_OnDisplaySample(rx, s_ms_ticks);
         }
         break;
 
@@ -815,7 +819,8 @@ static void LCD_DISPLAY_UPDATE(void)
     default:
         break;
     }
-    
+    g_lcd_buf.dotpos = dotpos;
+    g_lcd_buf.num4 = (uint16_t)scaled;
     // 更新四位数字和小数点位置
     LCD_Show_digits(g_lcd_buf.num4, g_lcd_buf.dotpos);
     LCD_ShowIcon(g_lcd_buf.mA_overf_neg_A_V_O_kO, g_lcd_buf.bat_25_50_75_100_MO);
@@ -934,9 +939,8 @@ void VoltTask_Init(void)
     g_volt.next_ms = s_ms_ticks;  // 立即可以更新
     g_volt.last_v  = 0.0f;
 
-    // 固定显示符号 V 和中间的小数点
+    // 固定显示符号 V
     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_VOLT<<4;
-    g_lcd_buf.dotpos = 2;
 }
 
 /* ========== 单步更新：无阻塞、无死循环 ========== */
@@ -955,20 +959,30 @@ void VoltTask_Update(void)
         delay_ms(1);
     }
     float v_raw = v_sum / AVG_N;
-    // 忽略掉 0.05V 以下的电压
-    if (v_raw <= 0.05f)
-    {
-        v_raw = 0.0f;
-    }
-    
     // LOGF("ticks=%u v=%d idle=%d\r\n", s_ms_ticks,(int)(v_raw*1000.0f+0.5f),idle_last_ms);
 
     // 对应换算公式是 ( vout - 0.9983 ) * 10000.0 / 379.2
     float dv = V_DV(v_raw);
-    g_volt.last_v = Volt_From_DV(dv);    // 真实输入（V，带正负号）
-    float neg_mul = (g_volt.last_v < 0)?-100.0f:100.0f;
-    // 四舍五入到 2 位小数并转 0.01V 为单位的整数，丢给数码管结构体缓存显示
-    g_lcd_buf.num4 = (uint16_t)(g_volt.last_v * neg_mul + 0.5f);
+    // 减缓微小的波动
+    float v_tmp = Volt_From_DV(dv);    // 真实输入（V，带正负号）
+    float delta = fabs(v_tmp-g_volt.last_v);
+    if (delta <= 0.03f)
+    {
+        return;
+    }
+    else if (delta >= 0.08f)
+    {
+        g_volt.last_v = v_tmp;
+    }else
+    {
+        g_volt.last_v += delta * 0.4f;
+    }
+    
+    // 舍弃微小电压
+    if (fabs(g_volt.last_v) <= 0.03f)
+    {
+        g_volt.last_v = 0.0f;
+    }
 }
 #pragma endregion
 #pragma region 电流表业务逻辑
@@ -1069,8 +1083,8 @@ void AmpTask_Update(void)
 void OhmTask_Init(void)
 {
     g_ohm.rx_display = 0.0f;
-    g_ohm.st    = OHM_S_WAIT_CONNECT;
-    // TODO: 逻辑要优化，最开始默认是KO档比较合理，检查小电阻就 转O，大电阻 就转MO
+    g_ohm.st = OHM_S_WAIT_CONNECT;
+    
     MultiMeterIOOutputConfig(true); // 需要控制PA2/PA3时转为输出
     g_ohm.range = RANGE_KOHM; // 开机默认处于Kohm档，然后根据电压切到 MO或O档
     set_range_pins(g_ohm.range);
@@ -1242,12 +1256,12 @@ void MultimeterInit()
     }
 
     // ★ 新增：开机抓一次“1V偏置”
-    CaptureInitialV1(32);
+    // CaptureInitialV1(32);
     LOGF("Mode=%d ticks=%u v_ref=%d\r\n", meter_mode, s_ms_ticks, (int)(g_v1_ref*10000.0f+0.05f));
 
     // 初始化仪表成功提示音
     PWM_Cmd(TIM1, ENABLE);
-    delay_ms(50);
+    delay_ms(30);
     PWM_Cmd(TIM1, DISABLE);
     
     hadSetMultimeterInit = true;
@@ -1265,6 +1279,14 @@ void first_init(void)
 int main (void)
 {
     first_init();
+#if 0
+    LCDInit();
+    LCD_AllOn();
+    while (1)
+    {
+        
+    }
+#endif
 #if ENABLE_LOG
     // uart0_tx 串口日志 PD5 uart1_tx 串口日志 PB1
     UART_Driver();
