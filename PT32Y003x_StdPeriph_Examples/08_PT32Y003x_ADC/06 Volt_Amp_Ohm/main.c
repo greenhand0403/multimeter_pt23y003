@@ -92,13 +92,10 @@ static inline float V_DV(float v_raw) { return v_raw - g_v1_ref; }
 #define I_MA_MAX         0.294f
 
 #define ZERO_BAND_V       0.0020f                    // 零点死区：|ΔV|<2mV 视为0V
-// 量程与显示
-#define V_POS_MAX         12.00f                     // 正向最大显示
-#define V_NEG_MIN         -12.0f                     // 反向最小显示
-#define OVERFLOW_MARGIN   0.05f                      // 超量程提前量（避免边界抖动）
 
-#define VIN_OPEN_TH         1.920f     // ≥此电压视为开路/移除
-#define VIN_ZERO_TH         0.0018f    // <此电压视为短路(0Ω)；比 0.0018 更保守
+#define VIN_OPEN_TH         1.93f     // ≥此电压视为开路/移除
+// #define VIN_ZERO_TH         0.33f    // <此电压视为短路(10Ω)
+#define VIN_ZERO_TH         0.96f    // <此电压视为短路(50Ω)
 // 分档电压门限（无交叉）：Ω < 0.0020V；kΩ < 0.1818V；MΩ < 1.92V
 #define VIN_OHM_MAX         0.0020f
 #define VIN_KOHM_MAX        0.1818f
@@ -111,7 +108,7 @@ static inline float V_DV(float v_raw) { return v_raw - g_v1_ref; }
 
 // 采样电阻（含你之前微调可继续放在这里统一管理）
 #define RS_OHM_RAW          50.9949f     // 51Ω
-#define RS_KOHM_RAW         5049.505f     // 5.1kΩ
+#define RS_KOHM_RAW         5075.505f     // 5.1kΩ
 #define RS_MOHM_RAW         510000.0f     // 510kΩ
 
 // 分档校准（斜率/零点），后续实测再填；默认1与0表示未校准
@@ -760,7 +757,7 @@ static void LCD_DISPLAY_UPDATE(void)
         {
             float rx = g_ohm.rx_display;
             ohm_range_t r = g_ohm.range;
-
+            Idle_OnDisplaySample(rx, s_ms_ticks);
             // 注：小数点位置请参考“规则”一节
             if (r == RANGE_OHM) {
                 // 0000~0510 Ω
@@ -771,10 +768,9 @@ static void LCD_DISPLAY_UPDATE(void)
                 // 00.00~99.99 kΩ
                 float val_k = rx / 1000.0f;
                 scaled = (uint32_t)(val_k * 100.0f + 0.5f);
-                
                 dotpos = 2;                         // xx.xx
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= (ICON_OHM_KO<<4);
-            } else { // RANGE_MOHM
+            } else if (r == RANGE_MOHM){ // RANGE_MOHM
                 // 00.00~99.99 MΩ
                 float val_M = rx / 1000000.0f;
                 if (val_M > 99.99f) {
@@ -784,18 +780,19 @@ static void LCD_DISPLAY_UPDATE(void)
                 scaled = (uint32_t)(val_M * 100.0f + 0.5f);
                 dotpos = 2;                         // xx.xx
                 g_lcd_buf.bat_25_50_75_100_MO |= ICON_OHM_MO<<4; // MΩ 图标在第二字节
+            } else {
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= (ICON_OHM_KO<<4);
+                scaled = rx;
             }
+            
              // 溢出与蜂鸣器示例（<51Ω响）
             bool overflow = false;
-            // if (g_ohm.range == RANGE_OHM   && rx >  999.9f)     overflow = true;
-            // if (g_ohm.range == RANGE_KOHM  && rx >  99990.0f)   overflow = true;
             if (g_ohm.range == RANGE_MOHM  && rx > 10000000.0f) overflow = true;
             if (overflow) {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO|=ICON_OVERF;
             } else {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO&=~ICON_OVERF;
             }
-            Idle_OnDisplaySample(rx, s_ms_ticks);
         }
         break;
 
@@ -1097,27 +1094,31 @@ void OhmTask_Update(void)
     switch (g_ohm.st)
     {
     case OHM_S_WAIT_CONNECT:
-        
+        if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
         g_ohm.vin = read_vin(AVG_N);
+        g_ohm.range = RANGE_KOHM;
+        set_range_pins(g_ohm.range);
         // 高于开路阈值 -> 说明开路未接电阻，继续等待
         if (g_ohm.vin > VIN_OPEN_TH) {
             // 可显示“— — — —”或 Ready
+            g_ohm.rx_display = 0.0f;
             return;
         }
         // 短路特判
-        if (g_ohm.vin < VIN_ZERO_TH) {
-            // 短路报警
-            PWM_Cmd(TIM1, ENABLE);
-            return; // 仍保持 WAIT，直到电压离开短路或被移除
-        }
+        // if (g_ohm.vin < VIN_ZERO_TH) {
+        //     // 短路报警
+        //     PWM_Cmd(TIM1, ENABLE);
+        //     return; // 仍保持 WAIT，直到电压离开短路或被移除
+        // }
         // 关闭蜂鸣器
-        PWM_Cmd(TIM1, DISABLE);
+        // PWM_Cmd(TIM1, DISABLE);
         g_ohm.st = OHM_S_SELECT_RANGE;
         break;
 
     case OHM_S_SELECT_RANGE:
+        if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
         g_ohm.vin = read_vin(AVG_N);
-        if (g_ohm.vin > VIN_OPEN_TH)
+        if (g_ohm.vin > VIN_OPEN_TH && g_ohm.range == RANGE_KOHM)
         { 
             g_ohm.st = OHM_S_WAIT_CONNECT;
             return;
@@ -1145,7 +1146,8 @@ void OhmTask_Update(void)
         g_ohm.vin = read_vin(AVG_N);
 
         // 拔掉/开路 -> 回等待
-        if (g_ohm.vin >= VIN_OPEN_TH) {
+        if (g_ohm.vin >= VIN_OPEN_TH && g_ohm.range == RANGE_KOHM) {
+            if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
             LOGS("ohm: open/remove\r\n"); 
             g_ohm.st = OHM_S_WAIT_CONNECT; 
             return; 
@@ -1153,18 +1155,21 @@ void OhmTask_Update(void)
 
         // 档位切换：欧姆档测大电阻>510Ω对应的1.687V，切回换档态
         if (g_ohm.range == RANGE_OHM && g_ohm.vin > 1.687f) {
+            if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
             LOGS("ohm: exit\r\n"); 
             g_ohm.st = OHM_S_SELECT_RANGE; 
             return; 
         }
         // 档位切换：kohm档测小电阻<510对应的0.184V；大电阻>51kΩ对应的1.805V，切回换档态
         if (g_ohm.range == RANGE_KOHM && (g_ohm.vin < 0.184f || g_ohm.vin > 1.805f)) {
+            if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
             LOGS("ohm: exit\r\n"); 
             g_ohm.st = OHM_S_SELECT_RANGE; 
             return; 
         }
         // 档位切换：Mohm档测小电阻<51kΩ对应的0.2112V，切回换档态
         if (g_ohm.range == RANGE_MOHM && g_ohm.vin < 0.2112f) {
+            if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
             LOGS("ohm: exit\r\n"); 
             g_ohm.st = OHM_S_SELECT_RANGE; 
             return; 
