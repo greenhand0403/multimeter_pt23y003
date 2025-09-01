@@ -113,8 +113,8 @@ static inline float V_DV(float v_raw) { return v_raw - g_v1_ref; }
 
 // 分档校准（斜率/零点），后续实测再填；默认1与0表示未校准
 #define GAIN_OHM            1.0000f
-#define GAIN_KOHM           0.9720f      // 你之前估过 kΩ 偏高，默认给个缩小系数
-#define GAIN_MOHM           0.9930f      // 你之前估过 MΩ 偏高
+#define GAIN_KOHM           0.9950f      // 你之前估过 kΩ 偏高，默认给个缩小系数
+#define GAIN_MOHM           0.9950f      // 你之前估过 MΩ 偏高
 #define OFFS_OHM            0.0f
 #define OFFS_KOHM           0.0f
 #define OFFS_MOHM           0.0f
@@ -686,7 +686,7 @@ void LCDInit(void)
 // }
 static void LCD_DISPLAY_UPDATE(void)
 {
-    // 1) 宏定义了 600ms 更新屏幕
+    // 1) 宏定义了 200ms 更新屏幕
     uint32_t now = s_ms_ticks;
     if ((int32_t)(now - g_lcd_buf.last_update_ms) < 0) return;
     g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
@@ -752,9 +752,10 @@ static void LCD_DISPLAY_UPDATE(void)
     case METER_MODE_OHM:
         // 清掉电压/电流/Ω系图标，保留电池外框
         g_lcd_buf.mA_overf_neg_A_V_O_kO &= ~(ICON_OHM<<4 | ICON_OHM_KO<<4);
-        // 第二字节中，仅清除 MΩ 位，避免把电池格子清掉
+        // 第二字节中，仅清除 MΩ 位
         g_lcd_buf.bat_25_50_75_100_MO &= ~(ICON_OHM_MO<<4);
         {
+            // 尚未转化为四位数字的原始电阻值
             float rx = g_ohm.rx_display;
             ohm_range_t r = g_ohm.range;
             Idle_OnDisplaySample(rx, s_ms_ticks);
@@ -768,26 +769,26 @@ static void LCD_DISPLAY_UPDATE(void)
                 // 00.00~99.99 kΩ
                 float val_k = rx / 1000.0f;
                 scaled = (uint32_t)(val_k * 100.0f + 0.5f);
-                dotpos = 2;                         // xx.xx
+                dotpos = 2;// xx.xx
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= (ICON_OHM_KO<<4);
             } else if (r == RANGE_MOHM){ // RANGE_MOHM
                 // 00.00~99.99 MΩ
                 float val_M = rx / 1000000.0f;
+                scaled = (uint32_t)(val_M * 100.0f + 0.5f);
                 if (val_M > 99.99f) {
-                     val_M = 99.99f; 
+                    scaled = 9999; 
                      g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF; 
                 }
-                scaled = (uint32_t)(val_M * 100.0f + 0.5f);
-                dotpos = 2;                         // xx.xx
+                dotpos = 2;// xx.xx
                 g_lcd_buf.bat_25_50_75_100_MO |= ICON_OHM_MO<<4; // MΩ 图标在第二字节
             } else {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= (ICON_OHM_KO<<4);
                 scaled = rx;
             }
             
-             // 溢出与蜂鸣器示例（<51Ω响）
+             // 溢出
             bool overflow = false;
-            if (g_ohm.range == RANGE_MOHM  && rx > 10000000.0f) overflow = true;
+            if (g_ohm.range == RANGE_MOHM  && scaled == 9999) overflow = true;
             if (overflow) {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO|=ICON_OVERF;
             } else {
@@ -1095,48 +1096,41 @@ void OhmTask_Update(void)
     {
     case OHM_S_WAIT_CONNECT:
         if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
-        g_ohm.vin = read_vin(AVG_N);
-        g_ohm.range = RANGE_KOHM;
-        set_range_pins(g_ohm.range);
-        // 高于开路阈值 -> 说明开路未接电阻，继续等待
-        if (g_ohm.vin > VIN_OPEN_TH) {
-            // 可显示“— — — —”或 Ready
-            g_ohm.rx_display = 0.0f;
-            return;
-        }
-        // 短路特判
-        // if (g_ohm.vin < VIN_ZERO_TH) {
-        //     // 短路报警
-        //     PWM_Cmd(TIM1, ENABLE);
-        //     return; // 仍保持 WAIT，直到电压离开短路或被移除
-        // }
-        // 关闭蜂鸣器
-        // PWM_Cmd(TIM1, DISABLE);
-        g_ohm.st = OHM_S_SELECT_RANGE;
-        break;
-
-    case OHM_S_SELECT_RANGE:
-        if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
-        g_ohm.vin = read_vin(AVG_N);
-        if (g_ohm.vin > VIN_OPEN_TH && g_ohm.range == RANGE_KOHM)
-        { 
-            g_ohm.st = OHM_S_WAIT_CONNECT;
-            return;
-        }
-        // 如果不是kO档，则去到kO档
-        if (g_ohm.range != RANGE_KOHM)
+        if (g_ohm.range!=RANGE_KOHM)
         {
             g_ohm.range = RANGE_KOHM;
             set_range_pins(g_ohm.range);
         }
-        // kO档测量范围510~51k，对应电压0.184~1.805，电压小则电阻小，退回到o档测小电
-        if (g_ohm.vin < 0.184f)
+        g_ohm.vin = read_vin(AVG_N);
+        // 千欧档大于1.755f即51k欧，需要换挡
+        if (g_ohm.vin >= 1.755f) {
+            g_ohm.range = RANGE_MOHM;
+            set_range_pins(g_ohm.range);
+            g_ohm.vin = read_vin(AVG_N);
+            if (g_ohm.vin >= VIN_OPEN_TH) {
+                g_ohm.rx_display = 0.0f;
+                return;
+            }
+        }
+        g_ohm.st = OHM_S_SELECT_RANGE;
+        break;
+    case OHM_S_SELECT_RANGE:
+        if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
+        if (g_ohm.range!=RANGE_KOHM)
+        {
+            g_ohm.range = RANGE_KOHM;
+            set_range_pins(g_ohm.range);
+        }
+        g_ohm.vin = read_vin(AVG_N);
+        if (g_ohm.vin >= 1.755f)
+        { 
+            g_ohm.range = RANGE_MOHM;
+            set_range_pins(g_ohm.range);
+        }
+        // kO档测量范围510，电压小则电阻小，退回到o档测小电
+        if (g_ohm.vin < 0.176f)
         {
             g_ohm.range = RANGE_OHM;
-            set_range_pins(g_ohm.range);
-        }else if (g_ohm.vin > 1.805f)
-        {
-            g_ohm.range = RANGE_MOHM;
             set_range_pins(g_ohm.range);
         }
         g_ohm.st = OHM_S_MEASURE;
@@ -1146,7 +1140,7 @@ void OhmTask_Update(void)
         g_ohm.vin = read_vin(AVG_N);
 
         // 拔掉/开路 -> 回等待
-        if (g_ohm.vin >= VIN_OPEN_TH && g_ohm.range == RANGE_KOHM) {
+        if ((g_ohm.vin >= 1.755f && g_ohm.range == RANGE_KOHM) || (g_ohm.vin >= VIN_OPEN_TH && g_ohm.range == RANGE_MOHM)) {
             if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
             LOGS("ohm: open/remove\r\n"); 
             g_ohm.st = OHM_S_WAIT_CONNECT; 
@@ -1154,21 +1148,21 @@ void OhmTask_Update(void)
         }
 
         // 档位切换：欧姆档测大电阻>510Ω对应的1.687V，切回换档态
-        if (g_ohm.range == RANGE_OHM && g_ohm.vin > 1.687f) {
+        if (g_ohm.range == RANGE_OHM && g_ohm.vin > 1.633f) {
             if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
             LOGS("ohm: exit\r\n"); 
             g_ohm.st = OHM_S_SELECT_RANGE; 
             return; 
         }
-        // 档位切换：kohm档测小电阻<510对应的0.184V；大电阻>51kΩ对应的1.805V，切回换档态
-        if (g_ohm.range == RANGE_KOHM && (g_ohm.vin < 0.184f || g_ohm.vin > 1.805f)) {
+        // 档位切换：kohm档测小电阻<510对应的0.184V切回换档态
+        if (g_ohm.range == RANGE_KOHM && (g_ohm.vin < 0.176f)) {
             if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
             LOGS("ohm: exit\r\n"); 
             g_ohm.st = OHM_S_SELECT_RANGE; 
             return; 
         }
         // 档位切换：Mohm档测小电阻<51kΩ对应的0.2112V，切回换档态
-        if (g_ohm.range == RANGE_MOHM && g_ohm.vin < 0.2112f) {
+        if (g_ohm.range == RANGE_MOHM && g_ohm.vin < 0.193f) {
             if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
             LOGS("ohm: exit\r\n"); 
             g_ohm.st = OHM_S_SELECT_RANGE; 
@@ -1285,11 +1279,35 @@ int main (void)
 {
     first_init();
 #if 0
+    // 全亮
     LCDInit();
     LCD_AllOn();
     while (1)
     {
         
+    }
+#endif
+#if 0
+    // 测试电阻表三个档位的换挡阈值
+    MultimeterInit();
+    g_ohm.range = RANGE_OHM;
+    set_range_pins(g_ohm.range);
+    while (1)
+    {
+        // 读取电压
+        g_ohm.vin = read_vin(AVG_N);
+
+        // 计算 Rx
+        float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
+                   (g_ohm.range == RANGE_KOHM) ? RS_KOHM_RAW : tune_Rs_Mohm(g_ohm.vin);
+        float rx = compute_rx(g_ohm.vin, Rs);
+        
+        // 分档校准
+        if (g_ohm.range == RANGE_OHM)   rx = rx * GAIN_OHM  + OFFS_OHM;
+        if (g_ohm.range == RANGE_KOHM)  rx = rx * GAIN_KOHM + OFFS_KOHM;
+        if (g_ohm.range == RANGE_MOHM)  rx = rx * GAIN_MOHM + OFFS_MOHM;
+
+        g_ohm.rx_display = rx;
     }
 #endif
 #if ENABLE_LOG
