@@ -209,7 +209,7 @@ static inline void Idle_OnDisplaySample(float v, uint32_t now_ms)
     }
 
     float denom = fabsf(g_idle.last_v);
-    if (denom < 0.10f) denom = 0.10f;    // 防 0/极小分母；按你的量纲给个合理下限
+    if (denom < 0.6f) denom = 0.6f;    // 防 0/极小分母；按你的量纲给个合理下限
     float diff = fabsf(v - g_idle.last_v) / denom;
     g_idle.last_v = v;
 
@@ -744,7 +744,6 @@ static void LCD_DISPLAY_UPDATE(void)
         }
         Idle_OnDisplaySample(g_amp.iamp, s_ms_ticks);
         break;
-    // TODO: 欧姆表逻辑需修改
     case METER_MODE_OHM:
         // 清掉电压/电流/Ω系图标，保留电池外框
         g_lcd_buf.mA_overf_neg_A_V_O_kO &= ~(ICON_OHM<<4 | ICON_OHM_KO<<4);
@@ -766,33 +765,27 @@ static void LCD_DISPLAY_UPDATE(void)
             } else if (r == RANGE_KOHM) {
                 // 00.00~99.99 kΩ
                 float val_k = rx / 1000.0f;
-                if (val_k <= 99.99f)
-                {
-                    dotpos = 2;
-                } else {
-                    // 100.0~999.9 kΩ
-                    dotpos = 3;
-                }
-                
                 scaled = (uint32_t)(val_k * 100.0f + 0.5f);
+                
                 dotpos = 2;                         // xx.xx
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= (ICON_OHM_KO<<4);
-
             } else { // RANGE_MOHM
                 // 00.00~99.99 MΩ
                 float val_M = rx / 1000000.0f;
-                if (val_M > 99.99f) { val_M = 99.99f; g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF; }
+                if (val_M > 99.99f) {
+                     val_M = 99.99f; 
+                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF; 
+                }
                 scaled = (uint32_t)(val_M * 100.0f + 0.5f);
                 dotpos = 2;                         // xx.xx
-                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OHM;
                 g_lcd_buf.bat_25_50_75_100_MO |= ICON_OHM_MO<<4; // MΩ 图标在第二字节
             }
             g_lcd_buf.dotpos = dotpos;
 
              // 溢出与蜂鸣器示例（<51Ω响）
             bool overflow = false;
-            if (g_ohm.range == RANGE_OHM   && rx >  999.9f)     overflow = true;
-            if (g_ohm.range == RANGE_KOHM  && rx >  99990.0f)   overflow = true;
+            // if (g_ohm.range == RANGE_OHM   && rx >  999.9f)     overflow = true;
+            // if (g_ohm.range == RANGE_KOHM  && rx >  99990.0f)   overflow = true;
             if (g_ohm.range == RANGE_MOHM  && rx > 10000000.0f) overflow = true;
             if (overflow) {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO|=ICON_OVERF;
@@ -962,6 +955,12 @@ void VoltTask_Update(void)
         delay_ms(1);
     }
     float v_raw = v_sum / AVG_N;
+    // 忽略掉 0.05V 以下的电压
+    if (v_raw <= 0.05f)
+    {
+        v_raw = 0.0f;
+    }
+    
     // LOGF("ticks=%u v=%d idle=%d\r\n", s_ms_ticks,(int)(v_raw*1000.0f+0.5f),idle_last_ms);
 
     // 对应换算公式是 ( vout - 0.9983 ) * 10000.0 / 379.2
