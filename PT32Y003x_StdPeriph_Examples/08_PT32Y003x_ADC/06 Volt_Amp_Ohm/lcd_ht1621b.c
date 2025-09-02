@@ -1,5 +1,5 @@
 #include "lcd_ht1621b.h"
-#define DelayT delay_us(1000)
+#define DelayT delay_us(200)
 // 建议新增：分别处理 MSB-first 与 LSB-first
 static void HT1621_WriteBits_MSB(uint8_t data, uint8_t cnt)
 {

@@ -752,7 +752,7 @@ static void LCD_DISPLAY_UPDATE(void)
             }
 
             if (rx < 0.0f) rx = 0.0f;
-
+            if (rx < 51.0f) g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
             if (rx <= 999.49f) {
                 // 0 ~ 999 Ω，整数显示
                 scaled = (uint32_t)(rx + 0.5f);
@@ -1090,6 +1090,7 @@ void OhmTask_Init(void)
     set_range_pins(g_ohm.range);
     LOGS("Ohm init\r\n");
 }
+#define OHM_OPEN_VOLT 1.927f
 
 // 每次调用仅推进一步；无阻塞、无 while(1)
 void OhmTask_Update(void)
@@ -1104,7 +1105,7 @@ void OhmTask_Update(void)
         }
         g_ohm.vin = read_vin(AVG_N);
 
-        // 欧姆档 短路时或者<51Ω时的电压 报警
+        // 欧姆档 短路时的电压 报警
         if (g_ohm.vin <= 0.021f)
         {
             if (!(TIM1->CR1 & 1)) PWM_Cmd(TIM1, ENABLE);
@@ -1113,26 +1114,30 @@ void OhmTask_Update(void)
         {
             if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);
         }
-
-        if (g_ohm.vin >= 1.927f) {
-            g_ohm.range = RANGE_MOHM;
-            set_range_pins(g_ohm.range);
-            g_ohm.vin = read_vin(AVG_N);
-            if (g_ohm.vin >= 1.927f) {
+        // 达到欧姆档极限
+        if (g_ohm.vin >= OHM_OPEN_VOLT) {
+            // g_ohm.range = RANGE_MOHM;
+            // set_range_pins(g_ohm.range);
+            // g_ohm.vin = read_vin(AVG_N);
+            // if (g_ohm.vin >= 1.927f) {
                 return;
-            }
+            // }
         }
 
-        g_ohm.range = RANGE_OHM;
-        set_range_pins(g_ohm.range);
-        g_ohm.vin = read_vin(AVG_N);
-        if (g_ohm.vin >= 1.925f) // Ω 档 测 51kΩ 时换到 MΩ 档
+        // 阶梯式换档判断
+        if (g_ohm.vin < 1.631f) // Ω 档 测 510Ω 时换到 kΩ 档
         {
-            g_ohm.range = RANGE_MOHM;
+            g_ohm.range = RANGE_OHM;
         }
-        else if (g_ohm.vin >= 1.631f) // Ω 档 测 510Ω 时换到 kΩ 档
+        else
         {
             g_ohm.range = RANGE_KOHM;
+            set_range_pins(g_ohm.range);
+            g_ohm.vin = read_vin(AVG_N);
+            if (g_ohm.vin >= 1.754f) // kΩ 档 测 51kΩ 时换到 MΩ 档
+            {
+                g_ohm.range = RANGE_MOHM;
+            }
         }
 
         set_range_pins(g_ohm.range);
@@ -1142,17 +1147,19 @@ void OhmTask_Update(void)
         g_ohm.vin = read_vin(AVG_N);
 
         // 不管任何档位，开路都会有>1.927V的电压
-        if (g_ohm.vin >= 1.927f) {
-            LOGS("ohm: open/remove\r\n"); 
-            g_ohm.st = OHM_S_WAIT_CONNECT; 
-            return; 
-        }
-
+        
         // 档位切换：欧姆档测大电阻>510Ω对应的1.631V 换档
-        if (g_ohm.range == RANGE_OHM && g_ohm.vin >= 1.631f) {
-            g_ohm.range = RANGE_KOHM;
-            set_range_pins(g_ohm.range);
-            g_ohm.vin = read_vin(AVG_N);
+        if (g_ohm.range == RANGE_OHM) {
+            if (g_ohm.vin <= 0.021f)
+            {
+                g_ohm.st = OHM_S_WAIT_CONNECT; 
+                return;
+            }else if (g_ohm.vin >= 1.631f)
+            {
+                g_ohm.range = RANGE_KOHM;
+                set_range_pins(g_ohm.range);
+                g_ohm.vin = read_vin(AVG_N);
+            }
         }
         // 档位切换：kohm档测电阻>51k对应的1.754V 换档
         if (g_ohm.range == RANGE_KOHM && (g_ohm.vin >= 1.754f)) {
@@ -1161,10 +1168,17 @@ void OhmTask_Update(void)
             g_ohm.vin = read_vin(AVG_N);
         }
         // 档位切换：Mohm档测小电阻<51kΩ对应的0.194V 换档
-        if (g_ohm.range == RANGE_MOHM && g_ohm.vin <= 0.194f) {
-            g_ohm.range = RANGE_KOHM;
-            set_range_pins(g_ohm.range);
-            g_ohm.vin = read_vin(AVG_N);
+        if (g_ohm.range == RANGE_MOHM) {
+            if (g_ohm.vin <= 0.194f)
+            {
+                g_ohm.range = RANGE_KOHM;
+                set_range_pins(g_ohm.range);
+                g_ohm.vin = read_vin(AVG_N);
+            }else if (g_ohm.vin >= OHM_OPEN_VOLT) {
+                LOGS("ohm: open/remove\r\n"); 
+                g_ohm.st = OHM_S_WAIT_CONNECT; 
+                return;
+            }
         }
 
         // 计算 Rx
