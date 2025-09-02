@@ -66,12 +66,9 @@ volatile uint8_t  s_pwr_last_sample  = 1;   // 1=未按, 0=按下
 // 万用表模式： 电压表 电流表 欧姆表
 typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } meter_mode_t;
 static meter_mode_t meter_mode = -1;
-// ===== 开机“1V偏置” =====
-// 无负载时 PA1 的基准电压（零点，可标定）
-static float   g_v1_ref   = 0.9932f;  // 开机测到的“1V”偏置（例如 0.9973）
 
 // 统一的“去偏置”助手：把原始电压换算成相对 1V 的差值 代表第二级运放的输入电压 便于后续计算
-static inline float V_DV(float v_raw) { return v_raw - g_v1_ref; }
+static inline float V_DV(float v_raw) { return v_raw - 1.0f; }
 // 重新记录空闲状态ADC采集电压变化<10%的起始时间
 #define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f)
 /***** 配置与常量 *****/
@@ -79,7 +76,7 @@ static inline float V_DV(float v_raw) { return v_raw - g_v1_ref; }
 
 // 硬件与标定数值
 #define RSHUNT           0.1f      // 采样电阻
-#define I_IDLE_A         0.001f    // <1mA 视为无负载
+#define I_IDLE_A         0.005f    // <5mA 视为无负载
 
 // A 档（默认）
 #define GAIN_A           4.0f
@@ -113,8 +110,8 @@ static inline float V_DV(float v_raw) { return v_raw - g_v1_ref; }
 
 // 分档校准（斜率/零点），后续实测再填；默认1与0表示未校准
 #define GAIN_OHM            1.003f
-#define GAIN_KOHM           1.037f      // 你之前估过 kΩ 偏高，默认给个缩小系数
-#define GAIN_MOHM           1.037f      // 你之前估过 MΩ 偏高
+#define GAIN_KOHM           1.035f
+#define GAIN_MOHM           1.035f
 #define OFFS_OHM            0.0f
 #define OFFS_KOHM           0.0f
 #define OFFS_MOHM           0.0f
@@ -179,7 +176,7 @@ static struct {
     float vin, iamp; // 最近一次的测量数据
 } g_amp;
 // ===== 欧姆表状态机 =====
-typedef enum { OHM_S_WAIT_CONNECT = 0, OHM_S_SELECT_RANGE, OHM_S_MEASURE } ohm_state_t;
+typedef enum { OHM_S_WAIT_CONNECT = 0, OHM_S_MEASURE } ohm_state_t;
 
 static struct {
     ohm_state_t st;
@@ -332,7 +329,7 @@ void ADC_Driver(void)
 
     // ★ 扫描序列：序号0=PA1(ADC1)【测量端】，序号1=PC4(ADC7)【电池】
     ADC_ScanChannelConfig(ADC, ADC_Channel_1, 0);
-    ADC_ScanChannelConfig(ADC, ADC_Channel_7, 1);
+    ADC_ScanChannelConfig(ADC, BATT_ADC_CHANNEL, 1);
     ADC_ScanChannelNumberConfig(ADC, 2);
     ADC_ScanCmd(ADC, ENABLE);
 
@@ -599,23 +596,6 @@ static float read_vin(int n)
     return ADC_TO_V(raw); // = raw * 2.0 / 4095（继续使用你的宏）
 }
 
-// 将开机测到的初始电压“记为1V”——存入 g_v1_ref
-static void CaptureInitialV1(uint16_t samples)
-{
-    // 可丢弃几次读数让 ADC 稳定
-    for (int i = 0; i < 4; ++i) (void)read_vin(AVG_N);
-
-    uint16_t N = samples ? samples : 32;
-    float sum = 0.f;
-    for (uint16_t i = 0; i < N; ++i) sum += read_vin(AVG_N);
-    float v = sum / (float)N;
-
-    // 简单边界保护：若读数离谱，则退回 1.0000
-    if (v < 0.90f || v > 1.10f) v = 1.0000f;
-
-    g_v1_ref   = v;
-}
-
 // MΩ 档对 Rs 的微调（按你此前经验：低/中/高阻做轻微补偿，可选）
 static inline float tune_Rs_Mohm(float vin)
 {
@@ -733,22 +713,21 @@ static void LCD_DISPLAY_UPDATE(void)
                 i=-i;
             }
 
-            // 超量程（你已有各档监控，这里再保一层）
-            switch (g_amp.st)
+            if (i > 0.999f)
             {
-            case AMP_S_MEASURE_mA://0999mA
-                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_MA;
-                break;
-            case AMP_S_MEASURE_A://1.xxxA
-                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_A;
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_A<<4;
                 dotpos = 1;
                 if (i >= 2.5f){
                     // 显示溢出
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
                 }
-                break;
-            default:
-                break;
+            }else if (i > I_IDLE_A)
+            {
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_MA;
+            }
+            else
+            {
+                i = 0;
             }
             scaled = (uint16_t)(i * 1000.0f + 0.5f);
         }
@@ -944,7 +923,6 @@ static inline float Volt_From_DV(float dv) {
     return dv * K_VOLT_SLOPE;
 }
 
-/* ========== 初始化：不重采“1V基准”，使用开机时的 g_v1_ref ========== */
 void VoltTask_Init(void)
 {
     g_volt.next_ms = s_ms_ticks;  // 立即可以更新
@@ -1006,11 +984,12 @@ void AmpTask_Init(void)
     GPIO_InitStruct.GPIO_Pin  = GPIO_Pin_2;
     GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-    GPIO_ResetBits(GPIOA, GPIO_Pin_2); // 默认 A 档
-    g_amp.mAflag = false;
+    GPIO_SetBits(GPIOA, GPIO_Pin_2); // 默认 mA 档
+    g_amp.mAflag = true;
     g_amp.st     = AMP_S_IDLE_WAIT;
+    g_amp.iamp = 0.0f;
 
-    LOGS("Amp init: A-range (PA2=0)\r\n");
+    // LOGS("Amp init: mA-range (PA2=1)\r\n");
 }
 // 每次调用仅推进一步；无阻塞、无 while(1)
 void AmpTask_Update(void)
@@ -1018,29 +997,41 @@ void AmpTask_Update(void)
     switch (g_amp.st)
     {
     case AMP_S_IDLE_WAIT:
+        if(!g_amp.mAflag) GPIO_SetBits(GPIOA, GPIO_Pin_2); // 默认 mA 档
         // 等待接入（按电流阈值更稳）
         g_amp.vin  = read_vin(AVG_N);
-        g_amp.iamp = (V_DV(g_amp.vin) * 10.0f / GAIN_A);  // 以 A 档公式估计
+        float dv = V_DV(g_amp.vin);
+        if (fabsf(dv) < ZERO_BAND_V) {                // ★ 零点死区：|ΔV|<2mV 视为 0
+            g_amp.iamp = 0.0f;
+            break;                                    // 保持待机，不进判档
+        }
+        g_amp.iamp = dv * 10.0f / GAIN_mA;
         // 串口可选日志
         // LOGF("I=%dmA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
-        if (g_amp.iamp >= I_IDLE_A) {
+        // ★ 阈值给一点余量，避免边缘抖动（例如 1.5mA）
+        if (fabsf(g_amp.iamp) >= (I_IDLE_A * 1.5f)) {
             g_amp.st = AMP_S_RANGE_DECIDE;
+        } else {
+            g_amp.iamp = 0.0f;                        // 仍视为 0 mA
         }
         break;
 
     case AMP_S_RANGE_DECIDE:
+        if(!g_amp.mAflag) GPIO_SetBits(GPIOA, GPIO_Pin_2); // 默认 mA 档
         g_amp.vin = read_vin(AVG_N);
-        // 由 I_MA_MAX 从 A 档推导 mA 进入门槛
-        if (g_amp.vin < (g_v1_ref + (GAIN_A * I_MA_MAX * RSHUNT))) {       // 进入 mA 档
-            GPIO_SetBits(GPIOA, GPIO_Pin_2);
-            g_amp.mAflag = true;
-            g_amp.st     = AMP_S_MEASURE_mA;
-            LOGS("enter mA range (PA2=1)\r\n");
-        } else {                           // 留在 A 档
+        // 由 I_MA_MAX 从 mA 档推导 A 进入门槛
+        if (g_amp.vin >= (1 + (GAIN_mA * I_MA_MAX * RSHUNT))||
+        g_amp.vin <= -(1 + (GAIN_mA * I_MA_MAX * RSHUNT))) {
+            // 进入 A 档
             GPIO_ResetBits(GPIOA, GPIO_Pin_2);
             g_amp.mAflag = false;
             g_amp.st     = AMP_S_MEASURE_A;
-            LOGS("stay in A range (PA2=0)\r\n");
+            // LOGS("enter A range (PA2=0)\r\n");
+        } else {
+            // 留在 mA 档
+            g_amp.mAflag = true;
+            g_amp.st     = AMP_S_MEASURE_mA;
+            // LOGS("stay in mA range (PA2=1)\r\n");
         }
         break;
 
@@ -1048,12 +1039,14 @@ void AmpTask_Update(void)
         g_amp.vin  = read_vin(AVG_N);
         g_amp.iamp = V_DV(g_amp.vin) * (MA_SLOPE_FIX / GAIN_mA);// mA放大了34倍
         // 退出条件
-        if (g_amp.iamp >= I_MA_MAX) {                // 超 mA 档上限 -> 重新判档 mA档只能测到294mA
+        if (g_amp.iamp >= I_MA_MAX||g_amp.iamp <= -I_MA_MAX) {
+            // 超 mA 档上限 -> 重新判档 mA档只能测到294mA
             LOGS("mA->A (>=294mA)\r\n");
             g_amp.st = AMP_S_RANGE_DECIDE;
             break;
         }
-        if (g_amp.iamp < I_IDLE_A) {                 // 无负载 -> 回等待
+        if (g_amp.iamp < I_IDLE_A&&g_amp.iamp > -I_IDLE_A) {
+            // 无负载 -> 回等待
             LOGS("load removed (mA)\r\n");
             g_amp.st = AMP_S_IDLE_WAIT;
             break;
@@ -1065,11 +1058,6 @@ void AmpTask_Update(void)
     case AMP_S_MEASURE_A:
         g_amp.vin  = read_vin(AVG_N);
         g_amp.iamp = V_DV(g_amp.vin) * 10.0f / GAIN_A; // A放大了4倍
-        if (g_amp.iamp < I_IDLE_A) {                 // 无负载 -> 回等待
-            LOGS("load removed (A)\r\n");
-            g_amp.st = AMP_S_IDLE_WAIT;
-            break;
-        }
 
         if (g_amp.iamp >= 2.5f) {
             LOGS("OVER: >=2.5A\r\n");
@@ -1081,6 +1069,12 @@ void AmpTask_Update(void)
             // LOGF("I=%dA vin=%dmV\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
         }
         
+        if (g_amp.iamp < I_IDLE_A && g_amp.iamp > -I_IDLE_A) {
+            // 无负载 -> 回等待
+            LOGS("load removed (A)\r\n");
+            g_amp.st = AMP_S_IDLE_WAIT;
+            break;
+        }
         break;
     }
 }
@@ -1110,7 +1104,7 @@ void OhmTask_Update(void)
         }
         g_ohm.vin = read_vin(AVG_N);
 
-        // 欧姆档 短路时的电压 报警
+        // 欧姆档 短路时或者<51Ω时的电压 报警
         if (g_ohm.vin <= 0.021f)
         {
             if (!(TIM1->CR1 & 1)) PWM_Cmd(TIM1, ENABLE);
@@ -1119,58 +1113,35 @@ void OhmTask_Update(void)
         {
             if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);
         }
-        // 在接入电阻后，自动执行换档逻辑
 
-        // 兆欧档 判断开路时的电压 等待接入电阻
-        g_ohm.range = RANGE_MOHM;
-        set_range_pins(g_ohm.range);
-        g_ohm.vin = read_vin(AVG_N);
         if (g_ohm.vin >= 1.927f) {
-            return;
+            g_ohm.range = RANGE_MOHM;
+            set_range_pins(g_ohm.range);
+            g_ohm.vin = read_vin(AVG_N);
+            if (g_ohm.vin >= 1.927f) {
+                return;
+            }
         }
 
         g_ohm.range = RANGE_OHM;
         set_range_pins(g_ohm.range);
         g_ohm.vin = read_vin(AVG_N);
-        if (g_ohm.vin >= 1.631f) // Ω 档 测 510Ω 时换到 kΩ 档
+        if (g_ohm.vin >= 1.925f) // Ω 档 测 51kΩ 时换到 MΩ 档
+        {
+            g_ohm.range = RANGE_MOHM;
+        }
+        else if (g_ohm.vin >= 1.631f) // Ω 档 测 510Ω 时换到 kΩ 档
         {
             g_ohm.range = RANGE_KOHM;
-            if (g_ohm.vin >= 1.925f) // Ω 档 测 51kΩ 时换到 MΩ 档
-            {
-                g_ohm.range = RANGE_MOHM;
-            }
         }
 
         set_range_pins(g_ohm.range);
         g_ohm.st = OHM_S_MEASURE;
         break;
-    case OHM_S_SELECT_RANGE:
-    //     if (TIM1->CR1 & 1) PWM_Cmd(TIM1, DISABLE);   // ★ 关键：先关蜂鸣器
-    //     if (g_ohm.range!=RANGE_KOHM)
-    //     {
-    //         g_ohm.range = RANGE_KOHM;
-    //         set_range_pins(g_ohm.range);
-    //     }
-    //     g_ohm.vin = read_vin(AVG_N);
-    //     // kΩ档测量大电阻，切MΩ档
-    //     if (g_ohm.vin >= 1.755f)
-    //     { 
-    //         g_ohm.range = RANGE_MOHM;
-    //         set_range_pins(g_ohm.range);
-    //     }
-    //     // kO档测量范围510，电压小则电阻小，退回到o档测小电
-    //     if (g_ohm.vin < 0.176f)
-    //     {
-    //         g_ohm.range = RANGE_OHM;
-    //         set_range_pins(g_ohm.range);
-    //     }
-    //     g_ohm.st = OHM_S_MEASURE;
-        break;
-
     case OHM_S_MEASURE: {
         g_ohm.vin = read_vin(AVG_N);
 
-        // 不管任何档位，拔掉电阻/开路都会有>1.927V的电压
+        // 不管任何档位，开路都会有>1.927V的电压
         if (g_ohm.vin >= 1.927f) {
             LOGS("ohm: open/remove\r\n"); 
             g_ohm.st = OHM_S_WAIT_CONNECT; 
@@ -1280,10 +1251,6 @@ void MultimeterInit()
     default:
         break;
     }
-
-    // ★ 新增：开机抓一次“1V偏置”
-    // CaptureInitialV1(32);
-    LOGF("Mode=%d ticks=%u v_ref=%d\r\n", meter_mode, s_ms_ticks, (int)(g_v1_ref*10000.0f+0.05f));
 
     // 初始化仪表成功提示音
     PWM_Cmd(TIM1, ENABLE);
