@@ -726,19 +726,24 @@ static void LCD_DISPLAY_UPDATE(void)
         g_lcd_buf.mA_overf_neg_A_V_O_kO &= ~(ICON_AMP_A<<4 | ICON_AMP_MA);
         // 使用“统一”显示：始终以 A 为单位，保留 3 位小数 → num4=|I|*1000, dotpos=1
         {
-            float i = g_amp.iamp;                 // 由测量状态机更新
+            float i = g_amp.iamp;
+            Idle_OnDisplaySample(i, s_ms_ticks);
             bool neg = (i < 0.0f);
-            if (neg) g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_NEG;
+            if (neg) {
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_NEG;
+                i=-i;
+            }
 
             // 超量程（你已有各档监控，这里再保一层）
             switch (g_amp.st)
             {
-            case AMP_S_MEASURE_mA:
+            case AMP_S_MEASURE_mA://0999mA
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_MA;
                 break;
-            case AMP_S_MEASURE_A:
+            case AMP_S_MEASURE_A://1.xxxA
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_A;
-                if ((neg && i <= -2.5f) || (i >= 2.5f)){
+                dotpos = 1;
+                if (i >= 2.5f){
                     // 显示溢出
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
                 }
@@ -746,8 +751,8 @@ static void LCD_DISPLAY_UPDATE(void)
             default:
                 break;
             }
+            scaled = (uint16_t)(i * 1000.0f + 0.5f);
         }
-        Idle_OnDisplaySample(g_amp.iamp, s_ms_ticks);
         break;
     case METER_MODE_OHM:
         // 清掉电压/电流/Ω系图标，保留电池外框
@@ -1009,7 +1014,7 @@ void AmpTask_Update(void)
         g_amp.vin  = read_vin(AVG_N);
         g_amp.iamp = (V_DV(g_amp.vin) * 10.0f / GAIN_A);  // 以 A 档公式估计
         // 串口可选日志
-        LOGF("I=%dmA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
+        // LOGF("I=%dmA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
         if (g_amp.iamp >= I_IDLE_A) {
             g_amp.st = AMP_S_RANGE_DECIDE;
         }
@@ -1033,7 +1038,7 @@ void AmpTask_Update(void)
 
     case AMP_S_MEASURE_mA:
         g_amp.vin  = read_vin(AVG_N);
-        g_amp.iamp = V_DV(g_amp.vin) * (MA_SLOPE_FIX / GAIN_mA);// A
+        g_amp.iamp = V_DV(g_amp.vin) * (MA_SLOPE_FIX / GAIN_mA);// mA放大了34倍
         // 退出条件
         if (g_amp.iamp >= I_MA_MAX) {                // 超 mA 档上限 -> 重新判档 mA档只能测到294mA
             LOGS("mA->A (>=294mA)\r\n");
@@ -1045,14 +1050,13 @@ void AmpTask_Update(void)
             g_amp.st = AMP_S_IDLE_WAIT;
             break;
         }
-        // 不显示小数点
-        g_lcd_buf.dotpos = 0;
-        LOGF("I=%dmA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
+        
+        // LOGF("I=%dmA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
         break;
 
     case AMP_S_MEASURE_A:
         g_amp.vin  = read_vin(AVG_N);
-        g_amp.iamp = V_DV(g_amp.vin) * 10.0f / GAIN_A; // A
+        g_amp.iamp = V_DV(g_amp.vin) * 10.0f / GAIN_A; // A放大了4倍
         if (g_amp.iamp < I_IDLE_A) {                 // 无负载 -> 回等待
             LOGS("load removed (A)\r\n");
             g_amp.st = AMP_S_IDLE_WAIT;
@@ -1066,15 +1070,11 @@ void AmpTask_Update(void)
             LOGS("OVER: <=-2.5A\r\n");
             g_amp.iamp = -2.5;
         } else {
-            LOGF("I=%dA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
+            // LOGF("I=%dA vin=%dmV\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
         }
-        // 显示左侧小数点1.XXX
-        g_lcd_buf.dotpos = 1;
+        
         break;
     }
-    float neg_mul = (g_amp.iamp < 0)?-1000.0f:1000.0f;
-    // 转 0.001A 为单位的整数，丢给数码管结构体缓存显示
-    g_lcd_buf.num4 = (uint16_t)(g_amp.iamp * neg_mul + 0.5f);
 }
 #pragma endregion
 #pragma region 欧姆表业务逻辑
@@ -1122,6 +1122,7 @@ void OhmTask_Update(void)
             set_range_pins(g_ohm.range);
         }
         g_ohm.vin = read_vin(AVG_N);
+        // kΩ档测量大电阻，切MΩ档
         if (g_ohm.vin >= 1.755f)
         { 
             g_ohm.range = RANGE_MOHM;
@@ -1287,27 +1288,49 @@ int main (void)
         
     }
 #endif
-#if 0
+#if 1
     // 测试电阻表三个档位的换挡阈值
     MultimeterInit();
-    g_ohm.range = RANGE_OHM;
-    set_range_pins(g_ohm.range);
+    // g_ohm.range = RANGE_OHM;
+    // set_range_pins(g_ohm.range);
+
+    // 进入 mA 档
+    GPIO_SetBits(GPIOA, GPIO_Pin_2);
+    g_amp.mAflag = true;
+    g_amp.st     = AMP_S_MEASURE_mA;
+    // 留在 A 档
+    GPIO_ResetBits(GPIOA, GPIO_Pin_2);
+    g_amp.mAflag = false;
+    g_amp.st     = AMP_S_MEASURE_A;
     while (1)
     {
         // 读取电压
-        g_ohm.vin = read_vin(AVG_N);
+        // g_ohm.vin = read_vin(AVG_N);
 
         // 计算 Rx
-        float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
-                   (g_ohm.range == RANGE_KOHM) ? RS_KOHM_RAW : tune_Rs_Mohm(g_ohm.vin);
-        float rx = compute_rx(g_ohm.vin, Rs);
+        // float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
+        //            (g_ohm.range == RANGE_KOHM) ? RS_KOHM_RAW : tune_Rs_Mohm(g_ohm.vin);
+        // float rx = compute_rx(g_ohm.vin, Rs);
         
         // 分档校准
-        if (g_ohm.range == RANGE_OHM)   rx = rx * GAIN_OHM  + OFFS_OHM;
-        if (g_ohm.range == RANGE_KOHM)  rx = rx * GAIN_KOHM + OFFS_KOHM;
-        if (g_ohm.range == RANGE_MOHM)  rx = rx * GAIN_MOHM + OFFS_MOHM;
+        // if (g_ohm.range == RANGE_OHM)   rx = rx * GAIN_OHM  + OFFS_OHM;
+        // if (g_ohm.range == RANGE_KOHM)  rx = rx * GAIN_KOHM + OFFS_KOHM;
+        // if (g_ohm.range == RANGE_MOHM)  rx = rx * GAIN_MOHM + OFFS_MOHM;
 
-        g_ohm.rx_display = rx;
+        // g_ohm.rx_display = rx;
+
+        g_amp.vin  = read_vin(AVG_N);
+        if (g_amp.st == AMP_S_MEASURE_mA)
+        {
+            g_amp.iamp = V_DV(g_amp.vin) * (MA_SLOPE_FIX / GAIN_mA);
+        }else if (g_amp.st == AMP_S_MEASURE_A)
+        {
+            g_amp.iamp = V_DV(g_amp.vin) * 10.0f / GAIN_A; // A放大了4倍
+        }
+        
+        BatteryTask_Update();     // ★ 每秒打印一次电池电量
+        LCD_DISPLAY_UPDATE();
+        delay_ms(100);
     }
 #endif
 #if ENABLE_LOG
