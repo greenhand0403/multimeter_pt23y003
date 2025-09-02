@@ -162,6 +162,18 @@ static bool last_ovf   = false;
 // - 第 dot_pos 位（从左数起1开始）：点亮小数点
 void LCD_Show_digits(uint16_t scaled_2dp, uint8_t dot_pos)
 {
+    if (dot_pos==4)
+    {
+        // 显示欧姆表未接入的状态 - - - -
+        uint8_t tmp = (uint8_t)(0x2 << 4);
+        for (uint8_t addr = ADDR_FIRST_L; addr < ADDR_FIRST_L+8; addr+=2)
+        {
+            HT1621_WriteData(addr, &tmp, 1);
+        }
+        return;
+    }
+    
+
     if (scaled_2dp > 9999) scaled_2dp = 9999;
 
     uint8_t d0 = (uint8_t)((scaled_2dp / 1000) % 10);
