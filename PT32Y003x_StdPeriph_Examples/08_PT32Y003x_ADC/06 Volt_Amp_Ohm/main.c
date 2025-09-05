@@ -15,9 +15,9 @@
 
 #pragma region 宏定义、全局变量和工具函数配置
 char log_buffer[64];  // 用于打印日志 足够存储格式化字符串
-#define ENABLE_LOG 0
+#define ENABLE_LOG 1
 #if ENABLE_LOG
-  #define LOG_UART UART1
+  #define LOG_UART UART0
   #define LOGF(...) do{ sprintf(log_buffer, __VA_ARGS__); UART1_SendString(log_buffer); }while(0)
   #define LOGS(s)   do{ UART1_SendString(s); }while(0)
 #else
@@ -68,7 +68,7 @@ typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } mete
 static meter_mode_t meter_mode = -1;
 
 // 统一的“去偏置”助手：把原始电压换算成相对 1V 的差值 代表第二级运放的输入电压 便于后续计算
-static inline float V_DV(float v_raw) { return v_raw - 1.0f; }
+static inline float V_DV(float v_raw) { return v_raw - 0.996f; }
 // 重新记录空闲状态ADC采集电压变化<10%的起始时间
 #define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f)
 /***** 配置与常量 *****/
@@ -76,19 +76,19 @@ static inline float V_DV(float v_raw) { return v_raw - 1.0f; }
 
 // 硬件与标定数值
 #define RSHUNT           0.1f      // 采样电阻
-#define I_IDLE_A         0.005f    // <5mA 视为无负载
+#define I_IDLE_A         0.006f    // <6mA 视为无负载
 
 // A 档（默认）
 #define GAIN_A           4.0f
 
 // mA 档（带你的斜率修正系数）
 #define GAIN_mA          33.99f
-#define MA_SLOPE_FIX     9.2863f   // 你前面标定得出的斜率系数
+#define MA_SLOPE_FIX     10.f   // 你前面标定得出的斜率系数
 
-// mA 档上限（=294mA）
-#define I_MA_MAX         0.294f
+// mA 档上限（=28mA）
+#define I_MA_MAX         0.28f
 
-#define ZERO_BAND_V       0.0020f                    // 零点死区：|ΔV|<2mV 视为0V
+#define ZERO_BAND_V       0.0040f                    // 零点死区：|ΔV|<4mV 视为0V
 
 #define VIN_OPEN_TH         1.93f     // ≥此电压视为开路/移除
 // #define VIN_ZERO_TH         0.33f    // <此电压视为短路(10Ω)
@@ -168,7 +168,7 @@ typedef struct {
 
 static volt_ctx_t g_volt;
 // ===== 电流表状态机 =====
-typedef enum { AMP_S_IDLE_WAIT = 0, AMP_S_RANGE_DECIDE, AMP_S_MEASURE_A, AMP_S_MEASURE_mA } amp_state_t;
+typedef enum { AMP_S_MEASURE_mA, AMP_S_MEASURE_A } amp_state_t;
 
 static struct {
     amp_state_t st;
@@ -220,7 +220,9 @@ static inline void Idle_OnDisplaySample(float v, uint32_t now_ms)
         if (g_idle.quiet &&
             (now_ms - g_idle.quiet_since_ms) >= IDLE_WINDOW_MS &&
             g_run_mode == RUN_MODE_NORMALWORK) {
+#ifndef ENABLE_LOG
             deep_sleep();
+#endif
         }
     }
 }
@@ -707,12 +709,13 @@ static void LCD_DISPLAY_UPDATE(void)
         {
             float i = g_amp.iamp;
             Idle_OnDisplaySample(i, s_ms_ticks);
+            // 取绝对值
             bool neg = (i < 0.0f);
             if (neg) {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_NEG;
                 i=-i;
             }
-
+            // 显示 1.xxx A
             if (i > 0.999f)
             {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_A<<4;
@@ -721,13 +724,10 @@ static void LCD_DISPLAY_UPDATE(void)
                     // 显示溢出
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
                 }
-            }else if (i > I_IDLE_A)
-            {
-                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_MA;
             }
             else
             {
-                i = 0;
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_MA;
             }
             scaled = (uint16_t)(i * 1000.0f + 0.5f);
         }
@@ -860,7 +860,7 @@ void BatteryTask_Update(void)
 
     int lvl = Battery_LevelFromV(v);
     
-    LOGF("BATT: %dV [%d/4]\r\n", (int)(v*1000.0f+0.5f), lvl);
+    // LOGF("BATT: %dV [%d/4]\r\n", (int)(v*1000.0f+0.5f), lvl);
 
     g_batt.level = lvl;
 }
@@ -981,95 +981,82 @@ void AmpTask_Init(void)
 
     GPIO_SetBits(GPIOA, GPIO_Pin_2); // 默认 mA 档
     g_amp.mAflag = true;
-    g_amp.st     = AMP_S_IDLE_WAIT;
+    g_amp.st     = AMP_S_MEASURE_mA;
     g_amp.iamp = 0.0f;
 
-    // LOGS("Amp init: mA-range (PA2=1)\r\n");
+    g_volt.next_ms = s_ms_ticks;  // 立即可以更新
+    LOGS("Amp init: mA-range (PA2=1)\r\n");
 }
-// 每次调用仅推进一步；无阻塞、无 while(1)
+
 void AmpTask_Update(void)
 {
+    // 1) 节流：到点再测
+    uint32_t now = s_ms_ticks;
+    if ((int32_t)(now - g_volt.next_ms) < 0) return;
+    g_volt.next_ms = now + 100;
+    
+    g_amp.vin  = read_vin(AVG_N);
+
+    float dv = V_DV(g_amp.vin);
+    if (fabsf(dv) < ZERO_BAND_V) {                // ★ 零点死区：|ΔV|<4mV 视为 0
+        if (g_amp.mAflag)
+        {
+            g_amp.iamp = 0.0f;
+        } else if (fabsf(dv) < (I_MA_MAX * 0.1f * GAIN_A)) {
+            g_amp.mAflag = true;
+            GPIO_SetBits(GPIOA, GPIO_Pin_2);
+            g_amp.st = AMP_S_MEASURE_mA;
+        }
+        return; 
+    }
+
     switch (g_amp.st)
     {
-    case AMP_S_IDLE_WAIT:
-        if(!g_amp.mAflag) GPIO_SetBits(GPIOA, GPIO_Pin_2); // 默认 mA 档
-        // 等待接入（按电流阈值更稳）
-        g_amp.vin  = read_vin(AVG_N);
-        float dv = V_DV(g_amp.vin);
-        if (fabsf(dv) < ZERO_BAND_V) {                // ★ 零点死区：|ΔV|<2mV 视为 0
-            g_amp.iamp = 0.0f;
-            break;                                    // 保持待机，不进判档
+    case AMP_S_MEASURE_mA:
+        g_amp.iamp = dv * MA_SLOPE_FIX / GAIN_mA;// mA放大了34倍
+        // 正向电压有偏置，反映到测量电流上，导致正向电流由0.004A的零点漂移，反向则没有
+        if (g_amp.iamp>0.f)
+        {
+            if (g_amp.iamp<0.005f)
+            {
+                g_amp.iamp *= 0.4f;
+            }else
+            {
+                g_amp.iamp -= 0.004f;
+            }
         }
-        g_amp.iamp = dv * 10.0f / GAIN_mA;
-        // 串口可选日志
-        // LOGF("I=%dmA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
-        // ★ 阈值给一点余量，避免边缘抖动（例如 1.5mA）
-        if (fabsf(g_amp.iamp) >= (I_IDLE_A * 1.5f)) {
-            g_amp.st = AMP_S_RANGE_DECIDE;
-        } else {
-            g_amp.iamp = 0.0f;                        // 仍视为 0 mA
-        }
-        break;
-
-    case AMP_S_RANGE_DECIDE:
-        if(!g_amp.mAflag) GPIO_SetBits(GPIOA, GPIO_Pin_2); // 默认 mA 档
-        g_amp.vin = read_vin(AVG_N);
-        // 由 I_MA_MAX 从 mA 档推导 A 进入门槛
-        if (g_amp.vin >= (1 + (GAIN_mA * I_MA_MAX * RSHUNT))||
-        g_amp.vin <= -(1 + (GAIN_mA * I_MA_MAX * RSHUNT))) {
-            // 进入 A 档
+        LOGF("mA=%d v=%d\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
+        // 退出条件
+        if (g_amp.iamp >= I_MA_MAX||g_amp.iamp <= -I_MA_MAX) {
+            // 超 mA 档上限 -> 重新判档 mA档只能测到280mA
+            LOGS("mA->A\r\n");
             GPIO_ResetBits(GPIOA, GPIO_Pin_2);
             g_amp.mAflag = false;
             g_amp.st     = AMP_S_MEASURE_A;
-            // LOGS("enter A range (PA2=0)\r\n");
-        } else {
-            // 留在 mA 档
-            g_amp.mAflag = true;
-            g_amp.st     = AMP_S_MEASURE_mA;
-            // LOGS("stay in mA range (PA2=1)\r\n");
-        }
-        break;
-
-    case AMP_S_MEASURE_mA:
-        g_amp.vin  = read_vin(AVG_N);
-        g_amp.iamp = V_DV(g_amp.vin) * (MA_SLOPE_FIX / GAIN_mA);// mA放大了34倍
-        // 退出条件
-        if (g_amp.iamp >= I_MA_MAX||g_amp.iamp <= -I_MA_MAX) {
-            // 超 mA 档上限 -> 重新判档 mA档只能测到294mA
-            LOGS("mA->A (>=294mA)\r\n");
-            g_amp.st = AMP_S_RANGE_DECIDE;
-            break;
-        }
-        if (g_amp.iamp < I_IDLE_A&&g_amp.iamp > -I_IDLE_A) {
-            // 无负载 -> 回等待
-            LOGS("load removed (mA)\r\n");
-            g_amp.st = AMP_S_IDLE_WAIT;
-            break;
         }
         
-        // LOGF("I=%dmA vin=%dmV\r\n", (int)(g_amp.iamp*1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
         break;
 
     case AMP_S_MEASURE_A:
-        g_amp.vin  = read_vin(AVG_N);
-        g_amp.iamp = V_DV(g_amp.vin) * 10.0f / GAIN_A; // A放大了4倍
-
+        g_amp.iamp = dv * 10.0f / GAIN_A; // A放大了4倍
+        LOGF("A=%d v=%d\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
+        // 退出条件：A档不测小电流，A档要测到280mA以上的
+        // if (g_amp.iamp <= I_MA_MAX && g_amp.iamp >= -I_MA_MAX) {
+        //     // 超 A 档下限 -> 重新判档 A档不测小电流，A档要测到294mA以上的
+        //     LOGS("A->mA\r\n");
+        //     GPIO_SetBits(GPIOA, GPIO_Pin_2);
+        //     g_amp.mAflag = true;
+        //     g_amp.st = AMP_S_MEASURE_mA;
+        // }
+        // 超 A 档上限
         if (g_amp.iamp >= 2.5f) {
             LOGS("OVER: >=2.5A\r\n");
             g_amp.iamp = 2.5;
         }else if (g_amp.iamp <= -2.5f) {
             LOGS("OVER: <=-2.5A\r\n");
             g_amp.iamp = -2.5;
-        } else {
-            // LOGF("I=%dA vin=%dmV\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
         }
         
-        if (g_amp.iamp < I_IDLE_A && g_amp.iamp > -I_IDLE_A) {
-            // 无负载 -> 回等待
-            LOGS("load removed (A)\r\n");
-            g_amp.st = AMP_S_IDLE_WAIT;
-            break;
-        }
         break;
     }
 }
@@ -1085,7 +1072,7 @@ void OhmTask_Init(void)
     g_ohm.st = OHM_S_SELECT_RANGE;
 
     set_range_pins(g_ohm.range);
-    LOGS("Ohm init\r\n");
+    // LOGS("Ohm init\r\n");
 }
 
 // 每次调用仅推进一步；无阻塞、无 while(1)
@@ -1178,7 +1165,7 @@ void OhmTask_Update(void)
         default:
             break;
         }
-        
+
     }
 }
 
@@ -1274,15 +1261,21 @@ int main (void)
         
     }
 #endif
+#if ENABLE_LOG
+    // uart0_tx 串口日志 PD5 uart1_tx 串口日志 PB1
+    UART_Driver();
+    LOGS("UART Init");
+#endif
 #if 0
     // 测试电阻表三个档位的换挡阈值
     MultimeterInit();
-    g_ohm.range = RANGE_OHM;
-    set_range_pins(g_ohm.range);
+    // g_ohm.range = RANGE_OHM;
+    // set_range_pins(g_ohm.range);
+
     // 进入 mA 档
-    // GPIO_SetBits(GPIOA, GPIO_Pin_2);
-    // g_amp.mAflag = true;
-    // g_amp.st     = AMP_S_MEASURE_mA;
+    GPIO_SetBits(GPIOA, GPIO_Pin_2);
+    g_amp.mAflag = true;
+    g_amp.st     = AMP_S_MEASURE_mA;
     // 留在 A 档
     // GPIO_ResetBits(GPIOA, GPIO_Pin_2);
     // g_amp.mAflag = false;
@@ -1290,40 +1283,37 @@ int main (void)
     while (1)
     {
         // 读取电压
-        g_ohm.vin = read_vin(AVG_N);
+        // g_ohm.vin = read_vin(AVG_N);
 
         // 计算 Rx
-        float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
-                   (g_ohm.range == RANGE_KOHM) ? RS_KOHM_RAW : RS_MOHM_RAW;
-        float rx = compute_rx(g_ohm.vin, Rs);
+        // float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
+        //            (g_ohm.range == RANGE_KOHM) ? RS_KOHM_RAW : RS_MOHM_RAW;
+        // float rx = compute_rx(g_ohm.vin, Rs);
         
         // 分档校准
-        if (g_ohm.range == RANGE_OHM)   rx = rx * GAIN_OHM  + OFFS_OHM;
-        if (g_ohm.range == RANGE_KOHM)  rx = rx * GAIN_KOHM + OFFS_KOHM;
-        if (g_ohm.range == RANGE_MOHM)  rx = rx * GAIN_MOHM + OFFS_MOHM;
+        // if (g_ohm.range == RANGE_OHM)   rx = rx * GAIN_OHM  + OFFS_OHM;
+        // if (g_ohm.range == RANGE_KOHM)  rx = rx * GAIN_KOHM + OFFS_KOHM;
+        // if (g_ohm.range == RANGE_MOHM)  rx = rx * GAIN_MOHM + OFFS_MOHM;
 
-        g_ohm.rx_display = rx;
+        // g_ohm.rx_display = rx;
 
-        // g_amp.vin  = read_vin(AVG_N);
-        // if (g_amp.st == AMP_S_MEASURE_mA)
-        // {
-        //     g_amp.iamp = V_DV(g_amp.vin) * (MA_SLOPE_FIX / GAIN_mA);
-        // }else if (g_amp.st == AMP_S_MEASURE_A)
-        // {
-        //     g_amp.iamp = V_DV(g_amp.vin) * 10.0f / GAIN_A; // A放大了4倍
-        // }
+        g_amp.vin  = read_vin(AVG_N);
+        if (g_amp.st == AMP_S_MEASURE_mA)
+        {
+            g_amp.iamp = V_DV(g_amp.vin) / GAIN_mA * MA_SLOPE_FIX;
+        }else if (g_amp.st == AMP_S_MEASURE_A)
+        {
+            g_amp.iamp = V_DV(g_amp.vin) / GAIN_A * 10.0f; // A放大了4倍
+        }
         
         BatteryTask_Update();     // ★ 每秒打印一次电池电量
-        g_lcd_buf.num4 = (uint16_t)(g_ohm.vin*1000.0f+0.5f);
+        // g_lcd_buf.num4 = (uint16_t)(g_ohm.vin*1000.0f+0.5f);
         // 更新四位数字和小数点位置
-        LCD_Show_digits(g_lcd_buf.num4, g_lcd_buf.dotpos);
-        delay_ms(20);
+        // LCD_Show_digits(g_lcd_buf.num4, g_lcd_buf.dotpos);
+        LCD_DISPLAY_UPDATE();
+        LOGF("g_amp.vin:%d g_amp.iamp:%d \r\n", (int)(g_amp.vin*1000.0f+0.5f), (int)(g_amp.iamp*1000.0f+0.5f));
+        delay_ms(300);
     }
-#endif
-#if ENABLE_LOG
-    // uart0_tx 串口日志 PD5 uart1_tx 串口日志 PB1
-    UART_Driver();
-    LOGS("UART Init");
 #endif
     deep_sleep();
     for (;;)
