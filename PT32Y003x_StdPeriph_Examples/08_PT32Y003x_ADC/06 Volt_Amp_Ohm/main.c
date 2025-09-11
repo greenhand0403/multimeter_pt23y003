@@ -14,9 +14,9 @@
 #include <string.h>
 
 #pragma region 宏定义、全局变量和工具函数配置
-char log_buffer[64];  // 用于打印日志 足够存储格式化字符串
 #define ENABLE_LOG 0
 #if ENABLE_LOG
+char log_buffer[64];  // 用于打印日志 足够存储格式化字符串
   #define LOG_UART UART0
   #define LOGF(...) do{ sprintf(log_buffer, __VA_ARGS__); UART1_SendString(log_buffer); }while(0)
   #define LOGS(s)   do{ UART1_SendString(s); }while(0)
@@ -24,20 +24,14 @@ char log_buffer[64];  // 用于打印日志 足够存储格式化字符串
   #define LOGF(...) do{}while(0)
   #define LOGS(s)   do{}while(0)
 #endif
-// 读到的ADC原始数据 本来是全局的，给判断变化率10%使用的，但目前未用上
+
+// 读到的ADC原始数据 本来是全局的，给判断变化率10%使用的
 static uint16_t g_adc_pa1_raw = 0;  // 序号0（PA1）
 static uint16_t g_adc_pc4_raw = 0;  // 序号1（PC4）
-// 万用表初始模式已设置
-static bool hadSetMultiMeterMode = false;
-// 万用表工作需要的外设已配置
-static bool hadSetMultimeterInit = false;
-// 运行模式：工作态 唤醒态 等待态
-typedef enum { RUN_MODE_NORMALWORK = 0, RUN_MODE_DEEPSLEEP = 1, RUN_MODE_WAKEUP = 2} run_mode_t;
 // 关机请求
 volatile uint8_t poweroff_request = 0;
 volatile uint8_t g_require_release_before_poweroff = 0; // 0=未要求, 1=要求先松手
 extern uint8_t s_lock_until_release; // 松手锁
-volatile uint8_t g_run_mode = RUN_MODE_NORMALWORK;   // 默认处于休眠模式
 // Idle 监控（120s自动休眠功能）
 typedef struct {
     float     last_v;
@@ -45,63 +39,52 @@ typedef struct {
     uint8_t   quiet;          // 1=当前处于“变化率<阈值”的安静区
     uint32_t  quiet_since_ms; // 进入安静区的时间戳
 } idle_tracker_t;
-
 volatile idle_tracker_t g_idle = {0};
-
 #define IDLE_WINDOW_MS        (120000U)  // 2min
 #define CHANGE_THRESHOLD_ON   (0.10f)     // 进入安静判定阈值（10%）
 #define CHANGE_THRESHOLD_OFF  (0.11f)     // 退出安静的回差阈值（11%：轻微迟滞，抗抖）
-
 // 长按按键初始化和按键唤醒
 // 可调参数
 const uint32_t PWR_DEBOUNCE_MS = 90U;
 const uint32_t PWR_LONGPRESS_MS = 900U;
 const uint32_t POSTWAKE_LONGPRESS_TIMEOUT = 5000U;
-
-// 由 TIM2 每 10ms 扫描用到的计数
+// PC5 按键定时器 TIM2 每 10ms 扫描用到的计数
 volatile uint16_t s_pwr_stable_ticks = 0;
 volatile uint16_t s_pwr_press_ticks  = 0;
 volatile uint8_t  s_pwr_last_sample  = 1;   // 1=未按, 0=按下
 
-// 万用表模式： 电压表 电流表 欧姆表
+// 万用表初始模式已设置
+static bool hadSetMultiMeterMode = false;
+// 万用表工作需要的外设已配置
+static bool hadSetMultimeterInit = false;
+// 运行模式：工作态 唤醒态 等待态
+typedef enum { RUN_MODE_NORMALWORK = 0, RUN_MODE_DEEPSLEEP = 1, RUN_MODE_WAKEUP = 2} run_mode_t;
+volatile uint8_t g_run_mode = RUN_MODE_NORMALWORK;   // 默认处于休眠模式
+
+// 万用表类型： 电压表 电流表 欧姆表
 typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } meter_mode_t;
 static meter_mode_t meter_mode = -1;
 
-// TODO: 开机先进行零点校准
+// TODO: 建议开机先进行零点校准
 static inline float V_DV(float v_raw) { return v_raw - 0.99f; }
-// 重新记录空闲状态ADC采集电压变化<10%的起始时间
-#define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f)
-/***** 配置与常量 *****/
-#define AVG_N            5
 
+#define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f) // ADC 原始值转电压
+#define AVG_N            5 // 平均采样次数
+// 电流表
 // 硬件与标定数值
 #define RSHUNT           0.1f      // 采样电阻
 #define I_IDLE_A         0.006f    // <6mA 视为无负载
-
 // A 档（默认）
 #define GAIN_A           3.9f
-
 // mA 档（带你的斜率修正系数）存在误差，大约只放大了30倍而非34倍
 #define GAIN_mA          33.99f
 #define MA_SLOPE_FIX     10.f   // 你前面标定得出的斜率系数
-
 // mA 档上限（=28mA）
 #define I_MA_MAX         0.28f
-
 #define ZERO_BAND_V       0.0040f                    // 零点死区：|ΔV|<4mV 视为0V
-
-#define VIN_OPEN_TH         1.93f     // ≥此电压视为开路/移除
+// 欧姆表
 // #define VIN_ZERO_TH         0.33f    // <此电压视为短路(10Ω)
 #define VIN_ZERO_TH         0.96f    // <此电压视为短路(50Ω)
-// 分档电压门限（无交叉）：Ω < 0.0020V；kΩ < 0.1818V；MΩ < 1.92V
-#define VIN_OHM_MAX         0.0020f
-#define VIN_KOHM_MAX        0.1818f
-
-// 分档迟滞（进入/退出不同阈值，抑制抖动）
-#define VIN_OHM_ENTER       0.0018f
-#define VIN_OHM_EXIT        0.0022f
-#define VIN_K_ENTER         0.1700f
-#define VIN_K_EXIT          0.1900f
 
 // 采样电阻（含你之前微调可继续放在这里统一管理）
 #define RS_OHM_RAW          51.0f     // 51Ω
@@ -117,7 +100,9 @@ static inline float V_DV(float v_raw) { return v_raw - 0.99f; }
 #define OFFS_MOHM           0.0f
 // 电阻表档位
 typedef enum { RANGE_OHM = 0, RANGE_KOHM, RANGE_MOHM } ohm_range_t;
-#define LCD_UPDATE_MS         500U
+// LCD 显示
+#define LCD_UPDATE_MS         600U
+// === LCD 显示缓冲区 ===
 struct LCD_BUF_STRUCT
 {
     uint32_t last_update_ms;
@@ -128,7 +113,7 @@ struct LCD_BUF_STRUCT
     uint8_t bat_25_50_75_100_MO;
 };
 static struct LCD_BUF_STRUCT g_lcd_buf;
-// === 你可以按芯片手册调整这一行 ===
+// === 电池电量检测 ===
 #define BATT_ADC_CHANNEL      ADC_Channel_7   // ★ PC4 对应的 ADC 通道（若不对，请改）
 #define BATT_SAMPLE_PERIOD_MS 1000U           // ★ 每秒一次
 #define BATT_SAMPLES_N        3
@@ -137,17 +122,17 @@ static struct LCD_BUF_STRUCT g_lcd_buf;
 #define BATT_TH_3             1.40f
 #define BATT_TH_2             1.25f
 #define BATT_TH_1             1.15f
-
+// === 电池电量状态机 ===
 static struct {
     uint32_t next_ms;
     float    v_filt;   // 低通后的电压
     int      level;    // 0..4
 } g_batt;
-// === 采样与显示参数（按需调整） ===
+// === 电压表采样间隔时间 ===
 #ifndef VOLT_SAMPLE_PERIOD_MS
 #define VOLT_SAMPLE_PERIOD_MS   20U    // 电压更新周期：20ms
 #endif
-
+// 电压表分压公式
 #ifndef K_VOLT_SLOPE
 // ((1000.0f+81.0f)/81.0f/2.0f)
 // #define K_VOLT_SLOPE            6.66f
@@ -162,6 +147,7 @@ static struct {
 #ifndef VOLT_MIN_V
 #define VOLT_MIN_V              (-12.0f)
 #endif
+// === 电压表状态机 ===
 typedef struct {
     uint32_t next_ms;   // 下次允许采样的时间戳(ms)
     float    last_v;    // 上一帧电压，供抖动/保留显示使用（可选）
@@ -188,6 +174,7 @@ static struct {
 // ===== 功能函数声明 =====
 void first_init(void);
 void deep_sleep(void);
+// 空闲自动睡眠检测
 static inline void Idle_OnDisplaySample(float v, uint32_t now_ms)
 {
     // 防止“时钟回拨”导致负差值
@@ -308,7 +295,7 @@ void UART1_SendString(const char* str)
 }
 #endif
 #pragma endregion
-#pragma region 输出参考电压2V并配置PA1的ADC采集
+#pragma region 参考电压输出配置
 /*******************************************************************************
 *Function:	ADC_Mode_Config
 *Description:	配置ADC
@@ -346,7 +333,7 @@ void ADC_Driver(void)
     while(!ADC_GetFlagStatus(ADC, ADC_FLAG_RDY));
 }
 #pragma endregion
-#pragma region 自动休眠逻辑
+#pragma region 自动休眠和按键逻辑
 // PC5 长按按键输入配置
 static void PowerKey_GPIO_Init(void)
 {
@@ -543,7 +530,7 @@ void deep_sleep(void)
     }
 }
 #pragma endregion
-#pragma region 万用表模式选择 PA2 PA3 输出配置
+#pragma region 万用表类型判断配置
 void MultiMeterIOOutputConfig(bool enable)
 {
 	if (!enable)
@@ -575,7 +562,7 @@ void MultiMeterIOOutputConfig(bool enable)
     }
 }
 #pragma endregion
-#pragma region 万用表初始化设置
+#pragma region 万用表读取电压和输出配置
 // 扫描 ADC 并更新 g_adc_pa1_raw 和 g_adc_pc4_raw
 static void ADC_ScanOnce(void)
 {
@@ -635,7 +622,7 @@ static void set_range_pins(ohm_range_t r)
     }
 }
 #pragma endregion
-#pragma region 液晶屏初始化
+#pragma region 初始化和屏幕显示
 
 void LCDInit(void)
 {
@@ -658,16 +645,7 @@ void LCDInit(void)
     
     HT1621_Init();
 }
-// static void lcd_show_ohms(float rx, ohm_range_t r)
-// {
-//     // 这里只做串口示例，LCD 你自己接
-//     switch (r)
-//     {
-//         case RANGE_OHM:  LOGF("Ohm: %d \r\n", (int)rx); break;          // 0000~0999Ω
-//         case RANGE_KOHM: LOGF("Ohm: %d k\r\n", (int)(rx/10.0f +0.5f)); break; // xx.xx kΩ
-//         case RANGE_MOHM: LOGF("Ohm: %d M\r\n", (int)(rx/10000.0f +0.5f)); break;    // xx.xx MΩ
-//     }
-// }
+
 static void LCD_DISPLAY_UPDATE(void)
 {
     // 1) 宏定义了 200ms 更新屏幕
@@ -742,7 +720,7 @@ static void LCD_DISPLAY_UPDATE(void)
         {
             // 尚未转化为四位数字的原始电阻值
             float rx = g_ohm.rx_display;
-            Idle_OnDisplaySample(rx, s_ms_ticks);
+            Idle_OnDisplaySample(g_ohm.vin, s_ms_ticks);
 
             if (rx < 1.0f) rx = 0.0f;
             if (rx < 51.0f) g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
@@ -883,7 +861,7 @@ void BuzzerInit(void)
 	/* 计数器计数模式，设置为向上计数 */
 	PWM_TimeBaseInitType.PWM_Direction = PWM_Direction_Up;
 	/* 周期匹配寄存器,累计MR0+1个频率后产生一个更新或者中断 根据驱动计数器1M 计算加载值369时 恰好2.7kHz符合蜂鸣器的最佳频率*/
-	PWM_TimeBaseInitType.PWM_AutoReloadValue = 369;// 369
+	PWM_TimeBaseInitType.PWM_AutoReloadValue = 36900;// 369
 	/* 驱动CNT计数器的时钟 = Fcksys/(psc+1) 48M分频后变成1M*/ 
 	PWM_TimeBaseInitType.PWM_Prescaler = 47;
 
@@ -993,37 +971,37 @@ void AmpTask_Init(void)
     g_volt.next_ms = s_ms_ticks;  // 立即可以更新
     LOGS("Amp init: mA-range (PA2=1)\r\n");
 }
-#define N 60
-#define K 11
+// #define N 64
+// #define K 4
 void AmpTask_Update(void)
 {
     // 1) 节流：到点再测
     uint32_t now = s_ms_ticks;
     if ((int32_t)(now - g_volt.next_ms) < 0) return;
-    g_volt.next_ms = now + 600;
-    // 
-    // g_amp.vin  = read_vin(AVG_N);
-    float buf[N];
-    for (uint8_t i = 0; i < N; i++) {
-        buf[i] = read_vin(1);
-    }
+    g_volt.next_ms = now + 300;
+    // 无滤波
+    g_amp.vin  = read_vin(AVG_N);
+    // float buf[N];
+    // for (uint8_t i = 0; i < N; i++) {
+    //     buf[i] = read_vin(1);
+    // }
     
     // 按差值大小排序（冒泡/插入/快速都行，这里用简单的）
-    for (uint8_t i = 0; i < N - 1; i++) {
-        for (uint8_t j = i + 1; j < N; j++) {
-            if (fabsf(buf[j] - 1.0f) > fabsf(buf[i] - 1.0f)) {
-                float tmp = buf[i];
-                buf[i] = buf[j];
-                buf[j] = tmp;
-            }
-        }
-    }
+    // for (uint8_t i = 0; i < N - 1; i++) {
+    //     for (uint8_t j = i + 1; j < N; j++) {
+    //         if (fabsf(buf[j] - 1.0f) > fabsf(buf[i] - 1.0f)) {
+    //             float tmp = buf[i];
+    //             buf[i] = buf[j];
+    //             buf[j] = tmp;
+    //         }
+    //     }
+    // }
     
-    float sum = 0;
-    for (uint8_t i = 0; i < K; i++) {
-        sum += buf[i];
-    }
-    g_amp.vin = sum / K;
+    // float sum = 0;
+    // for (uint8_t i = 4; i < K+4; i++) {
+    //     sum += buf[i];
+    // }
+    // g_amp.vin = sum / K;
 
     float dv = V_DV(g_amp.vin);
     if (fabsf(dv) < ZERO_BAND_V) {                // ★ 零点死区：|ΔV|<4mV 视为 0
