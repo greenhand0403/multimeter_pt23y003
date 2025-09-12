@@ -71,6 +71,20 @@ static inline float V_DV(float v_raw) { return v_raw - 0.99f; }
 #define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f) // ADC 原始值转电压
 #define AVG_N            5 // 平均采样次数
 // 电流表
+#define I_ZERO_OFFSET_A     0.064f   // 零点漂移（+83mA），先整体减掉
+#define I_FULLSCALE_A       3.0f    // 满量程（|I| 的上限）
+
+// 正向（0~3A）：读数偏高 +5~+50mA
+#define ERR_POS_AT0_A       0.006f  // +10mA @ ~0A
+#define ERR_POS_ATFS_A      (I_ZERO_OFFSET_A + ERR_POS_AT0_A)  // +50mA @ +3A
+
+// 反向（-3~0A）：读数偏低 ?5~?50mA（等价于数值更“负”）
+// 用正数表示“误差幅度”，方向由符号统一处理
+#define ERR_NEG_AT0_A       0.006f  // 10mA @ ~0A
+#define ERR_NEG_ATFS_A      (I_ZERO_OFFSET_A + ERR_NEG_AT0_A)  // 50mA @ -3A
+
+// 小电流死区（抗抖），可按噪声调整
+#define I_DEADBAND_A        0.005f  // 10mA
 // 硬件与标定数值
 #define RSHUNT           0.1f      // 采样电阻
 #define I_IDLE_A         0.006f    // <6mA 视为无负载
@@ -209,7 +223,7 @@ static inline void Idle_OnDisplaySample(float v, uint32_t now_ms)
             (now_ms - g_idle.quiet_since_ms >= IDLE_WINDOW_MS) &&
             g_run_mode == RUN_MODE_NORMALWORK) {
 #if ENABLE_LOG
-            LOGF("Idle_OnDisplaySample: %d\n", g_idle.quiet);
+            
 #else
             deep_sleep();
 #endif
@@ -648,7 +662,7 @@ void LCDInit(void)
 
 static void LCD_DISPLAY_UPDATE(void)
 {
-    // 1) 宏定义了 200ms 更新屏幕
+    // 1宏定义了 200ms 更新屏幕
     uint32_t now = s_ms_ticks;
     if ((int32_t)(now - g_lcd_buf.last_update_ms) < 0) return;
     g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
@@ -700,9 +714,11 @@ static void LCD_DISPLAY_UPDATE(void)
             {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_A<<4;
                 dotpos = 1;
-                if (i >= 2.5f){
+                // 由于零点漂移，实际上到不了3A，只能的到2.88A
+                if (i >= 2.9f){
                     // 显示溢出
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
+                    i = 2.9f;
                 }
             }
             else
@@ -861,7 +877,7 @@ void BuzzerInit(void)
 	/* 计数器计数模式，设置为向上计数 */
 	PWM_TimeBaseInitType.PWM_Direction = PWM_Direction_Up;
 	/* 周期匹配寄存器,累计MR0+1个频率后产生一个更新或者中断 根据驱动计数器1M 计算加载值369时 恰好2.7kHz符合蜂鸣器的最佳频率*/
-	PWM_TimeBaseInitType.PWM_AutoReloadValue = 36900;// 369
+	PWM_TimeBaseInitType.PWM_AutoReloadValue = 369;// 369
 	/* 驱动CNT计数器的时钟 = Fcksys/(psc+1) 48M分频后变成1M*/ 
 	PWM_TimeBaseInitType.PWM_Prescaler = 47;
 
@@ -971,8 +987,36 @@ void AmpTask_Init(void)
     g_volt.next_ms = s_ms_ticks;  // 立即可以更新
     LOGS("Amp init: mA-range (PA2=1)\r\n");
 }
-// #define N 64
-// #define K 4
+
+static inline float _interp_err(float iabs, float e0, float efs, float ifs) {
+    // 线性插值：e(i) = e0 + (efs - e0) * (i/ifs), 0<=i<=ifs
+    if (iabs < 0.0f) iabs = 0.0f;
+    if (iabs > ifs) iabs = ifs;
+    return e0 + (efs - e0) * (iabs / ifs);
+}
+
+static inline float current_compensate(float i_meas)
+{
+    // ① 统一零点抵消
+    float i = i_meas - I_ZERO_OFFSET_A;
+
+    // ② 小电流死区（防抖/消抖）
+    if (fabsf(i) < I_DEADBAND_A) return 0.0f;
+
+    // ③ 正/反向分开线性误差模型并扣除
+    float iabs = fabsf(i);
+    if (i >= 0.0f) {
+        // 正向误差：读数“偏高” → 需要减去一个正的幅值
+        float e = _interp_err(iabs, ERR_POS_AT0_A, ERR_POS_ATFS_A, I_FULLSCALE_A);
+        i -= e;
+    } else {
+        // 反向误差：读数“偏低”（更负） → 需要加回一个幅值
+        float e = _interp_err(iabs, ERR_NEG_AT0_A, ERR_NEG_ATFS_A, I_FULLSCALE_A);
+        i += e;
+    }
+
+    return i;
+}
 void AmpTask_Update(void)
 {
     // 1) 节流：到点再测
@@ -981,27 +1025,6 @@ void AmpTask_Update(void)
     g_volt.next_ms = now + 300;
     // 无滤波
     g_amp.vin  = read_vin(AVG_N);
-    // float buf[N];
-    // for (uint8_t i = 0; i < N; i++) {
-    //     buf[i] = read_vin(1);
-    // }
-    
-    // 按差值大小排序（冒泡/插入/快速都行，这里用简单的）
-    // for (uint8_t i = 0; i < N - 1; i++) {
-    //     for (uint8_t j = i + 1; j < N; j++) {
-    //         if (fabsf(buf[j] - 1.0f) > fabsf(buf[i] - 1.0f)) {
-    //             float tmp = buf[i];
-    //             buf[i] = buf[j];
-    //             buf[j] = tmp;
-    //         }
-    //     }
-    // }
-    
-    // float sum = 0;
-    // for (uint8_t i = 4; i < K+4; i++) {
-    //     sum += buf[i];
-    // }
-    // g_amp.vin = sum / K;
 
     float dv = V_DV(g_amp.vin);
     if (fabsf(dv) < ZERO_BAND_V) {                // ★ 零点死区：|ΔV|<4mV 视为 0
@@ -1060,16 +1083,38 @@ void AmpTask_Update(void)
         //     g_amp.st = AMP_S_MEASURE_mA;
         // }
         // 超 A 档上限
-        if (g_amp.iamp >= 2.5f) {
+        if (g_amp.iamp >= I_FULLSCALE_A) {
             LOGS("OVER: >=2.5A\r\n");
-            g_amp.iamp = 2.5;
-        }else if (g_amp.iamp <= -2.5f) {
+            g_amp.iamp = I_FULLSCALE_A;
+        }else if (g_amp.iamp <= -I_FULLSCALE_A) {
             LOGS("OVER: <=-2.5A\r\n");
-            g_amp.iamp = -2.5;
+            g_amp.iamp = -I_FULLSCALE_A;
         }
         
         break;
     }
+}
+void AmpTask_Update2(void)
+{
+    // 节流：到点再测
+    uint32_t now = s_ms_ticks;
+    if ((int32_t)(now - g_volt.next_ms) < 0) return;
+    g_volt.next_ms = now + 300;
+
+    g_amp.vin  = read_vin(AVG_N);
+    
+    g_amp.iamp = (g_amp.vin - 0.99f) / 3.33f * 10.0f; // A放大了4倍
+    g_amp.iamp = current_compensate(g_amp.iamp);  // ★ 误差补偿
+
+    // 超 A 档上限
+    if (g_amp.iamp >= I_FULLSCALE_A) {
+        LOGS("OVER: >=2.5A\r\n");
+        g_amp.iamp = I_FULLSCALE_A;
+    }else if (g_amp.iamp <= -I_FULLSCALE_A) {
+        LOGS("OVER: <=-2.5A\r\n");
+        g_amp.iamp = -I_FULLSCALE_A;
+    }
+    LOGF("mA=%d v=%d\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
 }
 #pragma endregion
 #pragma region 欧姆表业务逻辑
@@ -1093,6 +1138,8 @@ void OhmTask_Update(void)
     uint32_t now = s_ms_ticks;
     if ((uint32_t)(now - g_volt.next_ms) < 100) return;
     g_volt.next_ms = now;
+    // TODO: 防止换挡时刷新屏幕
+    g_lcd_buf.last_update_ms = now;
 
     if (g_ohm.st == OHM_S_SELECT_RANGE) {
         if (g_ohm.range != RANGE_KOHM)
@@ -1272,10 +1319,12 @@ int main (void)
         
     }
 #endif
- #if ENABLE_LOG
+#if ENABLE_LOG
     // uart0_tx 串口日志 PD5 uart1_tx 串口日志 PB1
     UART_Driver();
     LOGS("UART Init");
+#endif
+#if 0
  
     // 测试电阻表三个档位的换挡阈值
     MultimeterInit();
@@ -1283,13 +1332,13 @@ int main (void)
     // set_range_pins(g_ohm.range);
 
     // 进入 mA 档
-    GPIO_SetBits(GPIOA, GPIO_Pin_2);
-    g_amp.mAflag = true;
-    g_amp.st     = AMP_S_MEASURE_mA;
+    // GPIO_SetBits(GPIOA, GPIO_Pin_2);
+    // g_amp.mAflag = true;
+    // g_amp.st     = AMP_S_MEASURE_mA;
     // 留在 A 档
-    // GPIO_ResetBits(GPIOA, GPIO_Pin_2);
-    // g_amp.mAflag = false;
-    // g_amp.st     = AMP_S_MEASURE_A;
+    GPIO_ResetBits(GPIOA, GPIO_Pin_2);
+    g_amp.mAflag = false;
+    g_amp.st     = AMP_S_MEASURE_A;
     while (1)
     {
         delay_ms(300);
@@ -1315,7 +1364,8 @@ int main (void)
             g_amp.iamp = V_DV(g_amp.vin) / GAIN_mA * MA_SLOPE_FIX;
         }else if (g_amp.st == AMP_S_MEASURE_A)
         {
-            g_amp.iamp = V_DV(g_amp.vin) / GAIN_A * 10.0f; // A放大了4倍
+            g_amp.iamp = (g_amp.vin - 0.99f) / 3.33f * 10.0f; // A放大了4倍
+            g_amp.iamp = current_compensate(g_amp.iamp);  // ★ 误差补偿
         }
         
         BatteryTask_Update();     // ★ 每秒打印一次电池电量
@@ -1341,7 +1391,7 @@ int main (void)
                 VoltTask_Update();
                 break;
             case METER_MODE_AMP:
-                AmpTask_Update();
+                AmpTask_Update2();
                 break;
             case METER_MODE_OHM:
                 OhmTask_Update();
