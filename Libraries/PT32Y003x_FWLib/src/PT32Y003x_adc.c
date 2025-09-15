@@ -546,6 +546,10 @@ void ADC_BGCRSetBGNC(ADC_TypeDef *ADCx)
   tmpreg |= ADC_BGCR_BGE;
   tmpreg |= ADC_BGCR_BGOE;
   tmpreg &= ~ADC_BGCR_BGNC;        // 负端=VSS（除非你确实要用 PD4 作负端）
+  // TRIM 误差补偿值,并未改动最大电压输出，还是输出1.99V
+  // tmpreg |= (0x0 << 16);
+  // 设置误差时必须写入密码
+  // tmpreg |= (0xAC << 24);
   ADCx->BGCR = tmpreg;
 }
 

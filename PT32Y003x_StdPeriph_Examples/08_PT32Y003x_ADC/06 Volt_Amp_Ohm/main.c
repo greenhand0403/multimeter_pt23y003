@@ -66,23 +66,23 @@ typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } mete
 static meter_mode_t meter_mode = -1;
 
 // TODO: 建议开机先进行零点校准
-float V_REF = 0.99f;
-static inline float V_DV(float v_raw) { return v_raw - 0.99f; }
+float V_REF = 0.97f;
+static inline float V_DV(float v_raw) { return v_raw - 1.01f; }
 
 #define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f) // ADC 原始值转电压
 #define AVG_N            5 // 平均采样次数
 // 电流表
-#define I_ZERO_OFFSET_A     0.064f   // 零点漂移（+83mA），先整体减掉
+#define I_ZERO_OFFSET_A     0.025f   // 正向零点漂移
 #define I_FULLSCALE_A       3.0f    // 满量程（|I| 的上限）
 
-// 正向（0~3A）：读数偏高 +5~+50mA
-#define ERR_POS_AT0_A       0.006f  // +10mA @ ~0A
-#define ERR_POS_ATFS_A      (I_ZERO_OFFSET_A + ERR_POS_AT0_A)  // +50mA @ +3A
+// 正向（0~3A）：读数偏高 +5~+50mA 开机 减去5mA
+#define ERR_POS_AT0_A       0.010f  // +5mA @ ~0A
+#define ERR_POS_ATFS_A      0.065f // +50mA @ +3A
 
 // 反向（-3~0A）：读数偏低 ?5~?50mA（等价于数值更“负”）
 // 用正数表示“误差幅度”，方向由符号统一处理
-#define ERR_NEG_AT0_A       0.006f  // 10mA @ ~0A
-#define ERR_NEG_ATFS_A      (I_ZERO_OFFSET_A + ERR_NEG_AT0_A)  // 50mA @ -3A
+#define ERR_NEG_AT0_A       0.009f  // 10mA @ ~0A
+#define ERR_NEG_ATFS_A      0.064f  // 50mA @ -3A
 
 // 小电流死区（抗抖），可按噪声调整
 #define I_DEADBAND_A        0.005f  // 10mA
@@ -345,7 +345,7 @@ void ADC_Driver(void)
 
     // （可选）硬件平均
     ADC_AverageTimesConfig(ADC, ADC_AverageTimes_16);
-    // ADC_AverageCmd(ADC, ENABLE);
+    ADC_AverageCmd(ADC, ENABLE);
 
     ADC_Cmd(ADC, ENABLE);
     while(!ADC_GetFlagStatus(ADC, ADC_FLAG_RDY));
@@ -718,11 +718,11 @@ static void LCD_DISPLAY_UPDATE(void)
             {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_A<<4;
                 dotpos = 1;
-                // 由于零点漂移，实际上到不了3A，只能的到2.88A
-                if (i >= 2.9f){
+                // 由于零点漂移，实际上到不了3A，只能的到2.8A
+                if (i >= 2.8f){
                     // 显示溢出
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
-                    i = 2.9f;
+                    i = 2.8f;
                 }
             }
             else
@@ -1001,10 +1001,13 @@ static inline float _interp_err(float iabs, float e0, float efs, float ifs) {
 
 static inline float current_compensate(float i_meas)
 {
-    // ① 统一零点抵消
-    float i = i_meas - I_ZERO_OFFSET_A;
-
-    // ② 小电流死区（防抖/消抖）
+    float i = i_meas;
+    // ① 正向零点抵消
+    if (i>0.f)
+    {
+        i-= I_ZERO_OFFSET_A;
+    }
+    // 抵消零点误差后，如果是微小的电流，视为 0mA
     if (fabsf(i) < I_DEADBAND_A) return 0.0f;
 
     // ③ 正/反向分开线性误差模型并扣除
@@ -1017,6 +1020,10 @@ static inline float current_compensate(float i_meas)
         // 反向误差：读数“偏低”（更负） → 需要加回一个幅值
         float e = _interp_err(iabs, ERR_NEG_AT0_A, ERR_NEG_ATFS_A, I_FULLSCALE_A);
         i += e;
+        if (i>0.f)
+        {
+            i=0.f;
+        }
     }
 
     return i;
@@ -1107,7 +1114,7 @@ void AmpTask_Update2(void)
 
     g_amp.vin  = read_vin(AVG_N);
     
-    g_amp.iamp = (g_amp.vin - 0.99f) / 3.33f * 10.0f; // A放大了4倍
+    g_amp.iamp = V_DV(g_amp.vin) / 3.33f * 10.0f; // A放大了4倍
     g_amp.iamp = current_compensate(g_amp.iamp);  // ★ 误差补偿
 
     // 超 A 档上限
@@ -1319,7 +1326,7 @@ int main (void)
     UART_Driver();
     LOGS("UART Init");
 #endif
-#if 1 // 读取开机时的1V电压
+#if 0 // 读取开机时的 2V 输出端 电压
     s32 ADC_average=0;
     ADC_InitTypeDef  ADC_InitStruct;
 	ADC_StructInit(&ADC_InitStruct);
@@ -1345,11 +1352,15 @@ int main (void)
 	V_REF=((float)ADC_average)*2.0/8192;
     LOGF("V_REF:%d\r\n", (int)(V_REF*1000.0f+0.5f));
 
-    MultimeterInit();
+    // MultimeterInit();
     while (1)
     {
-        g_amp.vin = read_vin(AVG_N);
-        LOGF("g_amp.vin:%d\r\n", (int)(g_amp.vin*1000.0f+0.5f));
+        // g_amp.vin = read_vin(AVG_N);
+        // LOGF("g_amp.vin:%d\r\n", (int)(g_amp.vin*1000.0f+0.5f));
+
+        LOGF("g_amp.vin:%d\r\n", (int)(V_REF*10000.0f));
+
+        LCD_Show_digits((int)(V_REF*1000.0f+0.5f), 1);
         delay_ms(1000);
     }
 #endif
@@ -1405,7 +1416,7 @@ int main (void)
         LOGF("g_amp.vin:%d g_amp.iamp:%d \r\n", (int)(g_amp.vin*1000.0f+0.5f), (int)(g_amp.iamp*1000.0f+0.5f));
     }
 #endif
-    deep_sleep();
+    // deep_sleep();//方便测试关闭睡眠
     for (;;)
     {
         if (g_run_mode == RUN_MODE_NORMALWORK)
