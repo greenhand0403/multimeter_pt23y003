@@ -548,6 +548,16 @@ void ADC_BGCRSetBGNC(ADC_TypeDef *ADCx)
   tmpreg &= ~ADC_BGCR_BGNC;        // 负端=VSS（除非你确实要用 PD4 作负端）
   ADCx->BGCR = tmpreg;
 }
+
+void ADC_BGCRResetBGNC(ADC_TypeDef *ADCx)
+{
+  u32 tmpreg = 0;
+  tmpreg = ADCx->BGCR;
+  tmpreg &= ~ADC_BGCR_BGE;
+  tmpreg &= ~ADC_BGCR_BGOE;
+  tmpreg |= ADC_BGCR_BGNC;        // 负端=VSS（除非你确实要用 PD4 作负端）
+  ADCx->BGCR = tmpreg;
+}
 /**
   * @}
   */

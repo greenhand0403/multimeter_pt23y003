@@ -181,6 +181,7 @@ u16 ADC_GetScanData(ADC_TypeDef* ADCx,u32 ScanChannel);
 void ADC_RefNegativeConfig(ADC_TypeDef* ADCx,u32 RefN);
 void ADC_BGVoltageConfig(ADC_TypeDef *ADCx,u32 SEL);
 void ADC_BGCRSetBGNC(ADC_TypeDef *ADCx);
+void ADC_BGCRResetBGNC(ADC_TypeDef *ADCx);
 /**
   * @}
   */

@@ -14,7 +14,7 @@
 #include <string.h>
 
 #pragma region 宏定义、全局变量和工具函数配置
-#define ENABLE_LOG 0
+#define ENABLE_LOG 1
 #if ENABLE_LOG
 char log_buffer[64];  // 用于打印日志 足够存储格式化字符串
   #define LOG_UART UART0
@@ -66,6 +66,7 @@ typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } mete
 static meter_mode_t meter_mode = -1;
 
 // TODO: 建议开机先进行零点校准
+float V_REF = 0.99f;
 static inline float V_DV(float v_raw) { return v_raw - 0.99f; }
 
 #define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f) // ADC 原始值转电压
@@ -331,6 +332,9 @@ void ADC_Driver(void)
 	ADC_InitStruct.ADC_BGVoltage=ADC_BGVoltage_BG1v0;//BGS电压1.0v
 	ADC_InitStruct.ADC_ReferencePositive = ADC_ReferencePositive_BG2v0;
 	ADC_BGCRSetBGNC(ADC);// SET ADC_BGNC BIT
+    
+    delay_ms(10);
+
 	ADC_Init(ADC, &ADC_InitStruct);
 
     // ★ 扫描序列：序号0=PA1(ADC1)【测量端】，序号1=PC4(ADC7)【电池】
@@ -505,10 +509,10 @@ void deep_sleep(void)
 
         g_run_mode = RUN_MODE_DEEPSLEEP;
         poweroff_request = 0;
-
+        // 重置参考电压2V的输出，下次初始化时重新启动2V参考电压输出
+        ADC_BGCRResetBGNC(ADC);
         // 进入深度睡眠
         PWR_EnterDeepSleepMode(PWR_DeepSleepEntry_WFI);
-
         g_run_mode = RUN_MODE_WAKEUP;
         // —— 从 EXTI 唤醒返回 —— 关闭唤醒用 EXTI，避免运行态乱中断
         Wake_Key_EXITDisable();
@@ -1134,7 +1138,7 @@ void OhmTask_Init(void)
 // 每次调用仅推进一步；无阻塞、无 while(1)
 void OhmTask_Update(void)
 {   
-    // 1) 节流：到点再测
+    // 节流：到点再测
     uint32_t now = s_ms_ticks;
     if ((uint32_t)(now - g_volt.next_ms) < 100) return;
     g_volt.next_ms = now;
@@ -1310,19 +1314,44 @@ void first_init(void)
 int main (void)
 {
     first_init();
-#if 0
-    // 全亮
-    LCDInit();
-    LCD_AllOn();
-    while (1)
-    {
-        
-    }
-#endif
 #if ENABLE_LOG
     // uart0_tx 串口日志 PD5 uart1_tx 串口日志 PB1
     UART_Driver();
     LOGS("UART Init");
+#endif
+#if 1 // 读取开机时的1V电压
+    s32 ADC_average=0;
+    ADC_InitTypeDef  ADC_InitStruct;
+	ADC_StructInit(&ADC_InitStruct);
+	ADC_InitStruct.ADC_Prescaler = 64;						 	
+	ADC_InitStruct.ADC_Mode = ADC_Mode_Single;						//单次转换模式
+	ADC_InitStruct.ADC_TriggerSource = ADC_TriggerSource_Software;
+	ADC_InitStruct.ADC_TimerTriggerSource=ADC_TimerTriggerSource_TIM1ADC;						//定时源触发选择TIM0事件
+	ADC_InitStruct.ADC_Align = ADC_Align_Left;					//左对齐
+	ADC_InitStruct.ADC_Channel=ADC_Channel_12;						
+	ADC_InitStruct.ADC_ReferencePositive= ADC_ReferencePositive_BG2v0;	//选择VDDA作为正端参考电平
+	ADC_InitStruct.ADC_BGVoltage=ADC_BGVoltage_BG1v0;//BGS电压1.0v
+	ADC_Init(ADC, &ADC_InitStruct);
+    ADC_Cmd(ADC, ENABLE);		//启动ADC外设功能
+    while(!ADC_GetFlagStatus(ADC, ADC_FLAG_RDY));	//等待ADC启动完成
+    for(uint8_t i=0;i<100;i++)
+    {
+		ADC_StartOfConversion(ADC);	//启动转换
+		while(!ADC_GetFlagStatus(ADC, ADC_FLAG_EOC));		//等待ADC转换完成
+		ADC_average += (s16)ADC_GetConversionValue(ADC);	//获取结果
+	}
+    ADC_average/=100;
+	ADC_average >>= 2;//左对齐处理
+	V_REF=((float)ADC_average)*2.0/8192;
+    LOGF("V_REF:%d\r\n", (int)(V_REF*1000.0f+0.5f));
+
+    MultimeterInit();
+    while (1)
+    {
+        g_amp.vin = read_vin(AVG_N);
+        LOGF("g_amp.vin:%d\r\n", (int)(g_amp.vin*1000.0f+0.5f));
+        delay_ms(1000);
+    }
 #endif
 #if 0
  
