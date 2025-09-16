@@ -65,27 +65,29 @@ volatile uint8_t g_run_mode = RUN_MODE_NORMALWORK;   // 默认处于休眠模式
 typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } meter_mode_t;
 static meter_mode_t meter_mode = -1;
 
-// TODO: 建议开机先进行零点校准
-float V_REF = 0.97f;
-static inline float V_DV(float v_raw) { return v_raw - 1.01f; }
+// 开机零点 电流表
+float V_REF = 0.994f;
+// 开机零点 电流表
+// float V_REF = 0.994f;
+static inline float V_DV(float v_raw) { return v_raw - V_REF; }
 
 #define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f) // ADC 原始值转电压
 #define AVG_N            5 // 平均采样次数
 // 电流表
-#define I_ZERO_OFFSET_A     0.025f   // 正向零点漂移
+#define I_ZERO_OFFSET_A     0.f   // 正向零点漂移
 #define I_FULLSCALE_A       3.0f    // 满量程（|I| 的上限）
 
 // 正向（0~3A）：读数偏高 +5~+50mA 开机 减去5mA
-#define ERR_POS_AT0_A       0.010f  // +5mA @ ~0A
-#define ERR_POS_ATFS_A      0.065f // +50mA @ +3A
+#define ERR_POS_AT0_A       0.004f  // +5mA @ ~0A
+#define ERR_POS_ATFS_A      0.024f // +50mA @ +3A
 
 // 反向（-3~0A）：读数偏低 ?5~?50mA（等价于数值更“负”）
 // 用正数表示“误差幅度”，方向由符号统一处理
-#define ERR_NEG_AT0_A       0.009f  // 10mA @ ~0A
-#define ERR_NEG_ATFS_A      0.064f  // 50mA @ -3A
+#define ERR_NEG_AT0_A       0.004f  // 10mA @ ~0A
+#define ERR_NEG_ATFS_A      0.024f  // 50mA @ -3A
 
 // 小电流死区（抗抖），可按噪声调整
-#define I_DEADBAND_A        0.005f  // 10mA
+#define I_DEADBAND_A        0.0025f  // 2.5mA
 // 硬件与标定数值
 #define RSHUNT           0.1f      // 采样电阻
 #define I_IDLE_A         0.006f    // <6mA 视为无负载
@@ -145,16 +147,16 @@ static struct {
 } g_batt;
 // === 电压表采样间隔时间 ===
 #ifndef VOLT_SAMPLE_PERIOD_MS
-#define VOLT_SAMPLE_PERIOD_MS   20U    // 电压更新周期：20ms
+#define VOLT_SAMPLE_PERIOD_MS   300U    // 电流 电压 欧姆表 更新周期：300ms
 #endif
 // 电压表分压公式
 #ifndef K_VOLT_SLOPE
 // ((1000.0f+81.0f)/81.0f/2.0f)
 // #define K_VOLT_SLOPE            6.66f
 // ((1000.0f+81.0f)/81.0f*2.0f)
-#define K_VOLT_SLOPE            26.69f
+#define K_VOLT_SLOPE            26.39f
 #endif
-
+#define VOLT_ZERO_OFFSET     +0.07f   // 正向零点漂移
 // 是否做上/下限钳位（例如 0~12V）
 #ifndef VOLT_MAX_V
 #define VOLT_MAX_V              12.0f
@@ -321,6 +323,8 @@ void UART1_SendString(const char* str)
 *******************************************************************************/
 void ADC_Driver(void)
 {
+    ADC_Cmd(ADC, DISABLE);
+    
 	ADC_InitTypeDef  ADC_InitStruct;
 	ADC_StructInit(&ADC_InitStruct);
 	ADC_InitStruct.ADC_Prescaler = 48;						 	
@@ -639,6 +643,13 @@ static void set_range_pins(ohm_range_t r)
             break;
     }
 }
+
+static inline float _interp_err(float iabs, float e0, float efs, float ifs) {
+    // 线性插值：e(i) = e0 + (efs - e0) * (i/ifs), 0<=i<=ifs
+    if (iabs < 0.0f) iabs = 0.0f;
+    if (iabs > ifs) iabs = ifs;
+    return e0 + (efs - e0) * (iabs / ifs);
+}
 #pragma endregion
 #pragma region 初始化和屏幕显示
 
@@ -680,7 +691,7 @@ static void LCD_DISPLAY_UPDATE(void)
     {
     case METER_MODE_VOLT:
         if ( g_volt.last_v > 0.0f) {
-            scaled = (uint16_t)(g_volt.last_v * 100.0f + 0.5f);
+            scaled = (uint16_t)(g_volt.last_v * 100.0f);
             if (g_volt.last_v >= VOLT_MAX_V)
             {
                 // 显示溢出
@@ -688,7 +699,7 @@ static void LCD_DISPLAY_UPDATE(void)
                 scaled = 1200;
             }
         } else {
-            scaled = (uint16_t)(g_volt.last_v * -100.0f + 0.5f);
+            scaled = (uint16_t)(g_volt.last_v * -100.0f);
             g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_NEG;
             if (g_volt.last_v <= VOLT_MIN_V)
             {
@@ -719,10 +730,10 @@ static void LCD_DISPLAY_UPDATE(void)
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_A<<4;
                 dotpos = 1;
                 // 由于零点漂移，实际上到不了3A，只能的到2.8A
-                if (i >= 2.8f){
+                if (i >= 2.95f){
                     // 显示溢出
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
-                    i = 2.8f;
+                    i = I_FULLSCALE_A;
                 }
             }
             else
@@ -932,45 +943,59 @@ void VoltTask_Update(void)
 {
     // 1) 节流：到点再测
     uint32_t now = s_ms_ticks;
-    if ((int32_t)(now - g_volt.next_ms) < 0) return;
-    g_volt.next_ms = now + VOLT_SAMPLE_PERIOD_MS;
+    if ((int32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
+    g_volt.next_ms = now;
 
-    // 2) 再嵌套一层循环，读取多个样本取平均值
-    float v_sum = 0;
-    for (uint8_t i = 0; i < AVG_N; i++)
-    {
-        v_sum += read_vin(AVG_N);
-    }
-    float v_raw = v_sum / AVG_N;
+    float v_raw = read_vin(AVG_N);
     // LOGF("ticks=%u v=%d idle=%d\r\n", s_ms_ticks,(int)(v_raw*1000.0f+0.5f),idle_last_ms);
 
     // 对应换算公式是 ( vout - 0.9983 ) * 10000.0 / 379.2
     float dv = V_DV(v_raw);
     // 减缓微小的波动
     float v_tmp = Volt_From_DV(dv);    // 真实输入（V，带正负号）
-    float delta = fabs(v_tmp-g_volt.last_v);
-    if (delta <= 0.05f)
-    {
-        return;
-    }
-    else if (delta >= 0.1f)
-    {
-        g_volt.last_v = v_tmp;
-    }else
-    {
-        // 正电压零点漂移
-        if (g_volt.last_v > 0.0f)
-        {
-            g_volt.last_v -= 0.1f;
-        }
-        g_volt.last_v += delta * 0.5f;
-    }
+    // 正向零点漂移
+    v_tmp += VOLT_ZERO_OFFSET;
     
-    // 舍弃微小电压
-    if (fabs(g_volt.last_v) <= 0.05f)
-    {
-        g_volt.last_v = 0.0f;
+    float vabs = fabsf(v_tmp);
+    // 门限电压
+    if (vabs <= 0.04f) 
+        v_tmp = 0.0f;
+    else {
+    // ③ 正/反向线性误差模型扣除
+    float e = _interp_err(vabs, -0.04, +0.04, VOLT_MAX_V);
+    if (v_tmp >= 0.04f) {
+        // 正向误差：读数“偏高” → 需要减去一个值
+        vabs -= e;
+    } else {
+        // 反向误差：读数“偏低”（更负） → 需要加回一个值
+        vabs += e;
     }
+    v_tmp = v_tmp >= 0.0f ? vabs : -vabs;
+}
+    // float delta = fabs(v_tmp-g_volt.last_v);
+    // if (delta <= 0.05f)
+    // {
+    //     return;
+    // }
+    // else if (delta >= 0.1f)
+    // {
+    //     g_volt.last_v = v_tmp;
+    // }else
+    // {
+    //     // 正电压零点漂移
+    //     if (g_volt.last_v > 0.0f)
+    //     {
+    //         g_volt.last_v -= 0.1f;
+    //     }
+    //     g_volt.last_v += delta * 0.5f;
+    // }
+    
+    // // 舍弃微小电压
+    // if (fabs(g_volt.last_v) <= 0.05f)
+    // {
+    //     g_volt.last_v = 0.0f;
+    // }
+    g_volt.last_v = v_tmp;
 }
 #pragma endregion
 #pragma region 电流表业务逻辑
@@ -991,24 +1016,16 @@ void AmpTask_Init(void)
     g_volt.next_ms = s_ms_ticks;  // 立即可以更新
     LOGS("Amp init: mA-range (PA2=1)\r\n");
 }
-
-static inline float _interp_err(float iabs, float e0, float efs, float ifs) {
-    // 线性插值：e(i) = e0 + (efs - e0) * (i/ifs), 0<=i<=ifs
-    if (iabs < 0.0f) iabs = 0.0f;
-    if (iabs > ifs) iabs = ifs;
-    return e0 + (efs - e0) * (iabs / ifs);
-}
-
 static inline float current_compensate(float i_meas)
 {
     float i = i_meas;
     // ① 正向零点抵消
-    if (i>0.f)
-    {
-        i-= I_ZERO_OFFSET_A;
-    }
+    // if (i>0.f)
+    // {
+    //     i-= I_ZERO_OFFSET_A;
+    // }
     // 抵消零点误差后，如果是微小的电流，视为 0mA
-    if (fabsf(i) < I_DEADBAND_A) return 0.0f;
+    if (fabsf(i) <= I_DEADBAND_A) return 0.0f;
 
     // ③ 正/反向分开线性误差模型并扣除
     float iabs = fabsf(i);
@@ -1016,6 +1033,10 @@ static inline float current_compensate(float i_meas)
         // 正向误差：读数“偏高” → 需要减去一个正的幅值
         float e = _interp_err(iabs, ERR_POS_AT0_A, ERR_POS_ATFS_A, I_FULLSCALE_A);
         i -= e;
+        if (i<0.f)
+        {
+            i=0.f;
+        }
     } else {
         // 反向误差：读数“偏低”（更负） → 需要加回一个幅值
         float e = _interp_err(iabs, ERR_NEG_AT0_A, ERR_NEG_ATFS_A, I_FULLSCALE_A);
@@ -1028,14 +1049,15 @@ static inline float current_compensate(float i_meas)
 
     return i;
 }
+/*
 void AmpTask_Update(void)
 {
     // 1) 节流：到点再测
     uint32_t now = s_ms_ticks;
-    if ((int32_t)(now - g_volt.next_ms) < 0) return;
-    g_volt.next_ms = now + 300;
+    if ((int32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
+    g_volt.next_ms = now;
     // 无滤波
-    g_amp.vin  = read_vin(AVG_N);
+    g_amp.vin = read_vin(AVG_N);
 
     float dv = V_DV(g_amp.vin);
     if (fabsf(dv) < ZERO_BAND_V) {                // ★ 零点死区：|ΔV|<4mV 视为 0
@@ -1105,12 +1127,13 @@ void AmpTask_Update(void)
         break;
     }
 }
+*/
 void AmpTask_Update2(void)
 {
     // 节流：到点再测
     uint32_t now = s_ms_ticks;
-    if ((int32_t)(now - g_volt.next_ms) < 0) return;
-    g_volt.next_ms = now + 300;
+    if ((int32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
+    g_volt.next_ms = now;
 
     g_amp.vin  = read_vin(AVG_N);
     
@@ -1147,9 +1170,9 @@ void OhmTask_Update(void)
 {   
     // 节流：到点再测
     uint32_t now = s_ms_ticks;
-    if ((uint32_t)(now - g_volt.next_ms) < 100) return;
+    if ((uint32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
     g_volt.next_ms = now;
-    // TODO: 防止换挡时刷新屏幕
+    // 重置LCD刷新的计时器，防止换挡时刷新屏幕
     g_lcd_buf.last_update_ms = now;
 
     if (g_ohm.st == OHM_S_SELECT_RANGE) {
@@ -1416,7 +1439,7 @@ int main (void)
         LOGF("g_amp.vin:%d g_amp.iamp:%d \r\n", (int)(g_amp.vin*1000.0f+0.5f), (int)(g_amp.iamp*1000.0f+0.5f));
     }
 #endif
-    // deep_sleep();//方便测试关闭睡眠
+    deep_sleep();//方便测试关闭睡眠
     for (;;)
     {
         if (g_run_mode == RUN_MODE_NORMALWORK)
