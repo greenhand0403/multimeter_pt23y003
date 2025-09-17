@@ -14,7 +14,7 @@
 #include <string.h>
 
 #pragma region 宏定义、全局变量和工具函数配置
-#define ENABLE_LOG 1
+#define ENABLE_LOG 0
 #if ENABLE_LOG
 char log_buffer[64];  // 用于打印日志 足够存储格式化字符串
   #define LOG_UART UART0
@@ -109,12 +109,20 @@ static inline float V_DV(float v_raw) { return v_raw - V_REF; }
 #define RS_MOHM_RAW         510000.0f     // 510kΩ
 
 // 分档校准（斜率/零点），后续实测再填；默认1与0表示未校准
-#define GAIN_OHM            1.027f
-#define GAIN_KOHM           1.035f
-#define GAIN_MOHM           1.037f
-#define OFFS_OHM            0.0f
-#define OFFS_KOHM           0.0f
-#define OFFS_MOHM           0.0f
+// Ω 档（≤510Ω）
+#define GAIN_OHM    1.0255f
+#define OFFS_OHM    0.0f
+
+// kΩ 档（0.51k ~ 51kΩ）
+#define GAIN_KOHM   1.0494f
+#define OFFS_KOHM   (-135.691f)
+
+// MΩ 档分段（≥75kΩ）
+#define MOHM_SPLIT_OHMS   220000.0f   // 220k 为分界
+#define GAIN_MOHM_LOW     1.0197f   // 75k~220k
+#define OFFS_MOHM_LOW     (-253.17f)
+#define GAIN_MOHM_HIGH    1.0591f   // ≥470k
+#define OFFS_MOHM_HIGH    (-30288.99f)
 // 电阻表档位
 typedef enum { RANGE_OHM = 0, RANGE_KOHM, RANGE_MOHM } ohm_range_t;
 // LCD 显示
@@ -1209,19 +1217,29 @@ void OhmTask_Update(void)
             return;
         }
 
-        // 计算 Rx
+        // 计算 Rx（原始）
         float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
-                    (g_ohm.range == RANGE_KOHM) ? RS_KOHM_RAW : RS_MOHM_RAW;
-        float rx = compute_rx(g_ohm.vin, Rs);
-        
-        // 分档校准
-        if (g_ohm.range == RANGE_OHM)   rx = rx * GAIN_OHM  + OFFS_OHM;
-        if (g_ohm.range == RANGE_KOHM)  rx = rx * GAIN_KOHM + OFFS_KOHM;
-        if (g_ohm.range == RANGE_MOHM)  rx = rx * GAIN_MOHM + OFFS_MOHM;
+                (g_ohm.range == RANGE_KOHM) ? RS_KOHM_RAW : RS_MOHM_RAW;
+        float rx_raw = compute_rx(g_ohm.vin, Rs);
+        float rx = rx_raw;
+
+        // ===== 分档校准 =====
+        if (g_ohm.range == RANGE_OHM) {
+            rx = rx * GAIN_OHM + OFFS_OHM;
+        } else if (g_ohm.range == RANGE_KOHM) {
+            rx = rx * GAIN_KOHM + OFFS_KOHM;
+        } else { // RANGE_MOHM
+            // MΩ 档按区间分段
+            if (rx_raw <= MOHM_SPLIT_OHMS) {
+                rx = rx_raw * GAIN_MOHM_LOW  + OFFS_MOHM_LOW;
+            } else {
+                rx = rx_raw * GAIN_MOHM_HIGH + OFFS_MOHM_HIGH;
+            }
+        }
 
         g_ohm.rx_display = rx;
 
-        if (rx < 51.0f ) 
+        if (rx < 51.0f && g_ohm.range == RANGE_OHM) 
         {
             if (!(TIM1->CR1 & 1))
             {
