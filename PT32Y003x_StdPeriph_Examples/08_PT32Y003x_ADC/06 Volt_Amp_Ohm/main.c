@@ -760,9 +760,24 @@ static void LCD_DISPLAY_UPDATE(void)
             // 尚未转化为四位数字的原始电阻值
             float rx = g_ohm.rx_display;
             Idle_OnDisplaySample(g_ohm.vin, s_ms_ticks);
-
-            if (rx < 1.0f) rx = 0.0f;
-            if (rx < 51.0f) g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
+            
+            if (rx < 51.0f) {
+                if (rx < 1.0f) {
+                    rx = 0.0f;
+                }
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
+                if (!(TIM1->CR1 & 1))// g_ohm.st == OHM_S_MEASURE &&
+                {
+                    PWM_Cmd(TIM1, ENABLE);
+                }
+            }
+            else
+            {
+                if (TIM1->CR1 & 1)
+                {
+                    PWM_Cmd(TIM1, DISABLE);
+                }
+            }
 
             if (rx <= 999.49f) {
                 // 0 ~ 999 Ω，整数显示
@@ -789,7 +804,7 @@ static void LCD_DISPLAY_UPDATE(void)
             } else {
                 // 1.00M ~ 51.00M
                 float v_M = rx / 1000000.0f;
-                if (v_M > 51.00f) {
+                if (v_M >= 51.00f) {
                     v_M = 51.00f;
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
                     dotpos = 4;
@@ -1162,7 +1177,8 @@ void AmpTask_Update2(void)
 #pragma region 欧姆表业务逻辑
 void OhmTask_Init(void)
 {
-    g_ohm.rx_display = 0.0f;
+    // 51MΩ
+    g_ohm.rx_display = 51000000.0f;
     g_volt.next_ms = s_ms_ticks;
 
     MultiMeterIOOutputConfig(true); // 需要控制PA2/PA3时转为输出
@@ -1171,6 +1187,9 @@ void OhmTask_Init(void)
 
     set_range_pins(g_ohm.range);
     // LOGS("Ohm init\r\n");
+
+    // 重置LCD刷新的计时器，防止初始化时刷新屏幕
+    g_lcd_buf.last_update_ms = g_volt.next_ms + VOLT_SAMPLE_PERIOD_MS;
 }
 
 // 每次调用仅推进一步；无阻塞、无 while(1)
@@ -1180,8 +1199,6 @@ void OhmTask_Update(void)
     uint32_t now = s_ms_ticks;
     if ((uint32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
     g_volt.next_ms = now;
-    // 重置LCD刷新的计时器，防止换挡时刷新屏幕
-    g_lcd_buf.last_update_ms = now;
 
     if (g_ohm.st == OHM_S_SELECT_RANGE) {
         if (g_ohm.range != RANGE_KOHM)
@@ -1190,20 +1207,17 @@ void OhmTask_Update(void)
             set_range_pins(g_ohm.range);
         }
         g_ohm.vin = read_vin(AVG_N);
-
         // kΩ档 测量 510Ω 0.176 530Ω 0.181以下的电阻 切Ω档
         if (g_ohm.vin<0.179f)
         {
             g_ohm.range = RANGE_OHM;
             set_range_pins(g_ohm.range);
-            g_ohm.vin = read_vin(AVG_N);
         }
         // kΩ档 测量 51kΩ以上的电阻 切MΩ档
         else if (g_ohm.vin>1.817f)
         {
             g_ohm.range = RANGE_MOHM;
             set_range_pins(g_ohm.range);
-            
         }
         // 测量完成 切到测量状态
         g_ohm.st = OHM_S_MEASURE;
@@ -1228,7 +1242,7 @@ void OhmTask_Update(void)
             rx = rx * GAIN_OHM + OFFS_OHM;
         } else if (g_ohm.range == RANGE_KOHM) {
             rx = rx * GAIN_KOHM + OFFS_KOHM;
-        } else { // RANGE_MOHM
+        } else {
             // MΩ 档按区间分段
             if (rx_raw <= MOHM_SPLIT_OHMS) {
                 rx = rx_raw * GAIN_MOHM_LOW  + OFFS_MOHM_LOW;
@@ -1238,21 +1252,6 @@ void OhmTask_Update(void)
         }
 
         g_ohm.rx_display = rx;
-
-        if (rx < 51.0f && g_ohm.range == RANGE_OHM) 
-        {
-            if (!(TIM1->CR1 & 1))
-            {
-                PWM_Cmd(TIM1, ENABLE);
-            }
-        }
-        else if (rx > 51.0f) 
-        {
-            if (TIM1->CR1 & 1)
-            {
-                PWM_Cmd(TIM1, DISABLE);
-            }
-        }
         
         // 超出测量范围 时回去选档
         switch (g_ohm.range)
@@ -1260,6 +1259,8 @@ void OhmTask_Update(void)
         case RANGE_OHM:
             if (rx > 510.0f) {
                 g_ohm.st = OHM_S_SELECT_RANGE;
+                // 重置LCD刷新的计时器，防止换挡时刷新屏和报警
+                g_lcd_buf.last_update_ms = now + VOLT_SAMPLE_PERIOD_MS;
             }
             break;
         case RANGE_KOHM:
