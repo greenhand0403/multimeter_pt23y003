@@ -65,10 +65,12 @@ volatile uint8_t g_run_mode = RUN_MODE_NORMALWORK;   // 默认处于休眠模式
 typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } meter_mode_t;
 static meter_mode_t meter_mode = -1;
 
-// 开机零点 电流表
-float V_REF = 0.994f;
-// 开机零点 电流表
+// 开机零点 电流表一号
 // float V_REF = 0.994f;
+// 开机零点 电流表二号
+// float V_REF = 0.991f;
+// 开机零点 电流表三号
+float V_REF = 0.989f;
 static inline float V_DV(float v_raw) { return v_raw - V_REF; }
 
 #define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f) // ADC 原始值转电压
@@ -78,16 +80,17 @@ static inline float V_DV(float v_raw) { return v_raw - V_REF; }
 #define I_FULLSCALE_A       3.0f    // 满量程（|I| 的上限）
 
 // 正向（0~3A）：读数偏高 +5~+50mA 开机 减去5mA
-#define ERR_POS_AT0_A       0.004f  // +5mA @ ~0A
-#define ERR_POS_ATFS_A      0.024f // +50mA @ +3A
+#define ERR_POS_AT0_A       -0.008f  // +5mA @ ~0A
+#define ERR_POS_ATFS_A      0.028f // +50mA @ +3A
 
 // 反向（-3~0A）：读数偏低 ?5~?50mA（等价于数值更“负”）
 // 用正数表示“误差幅度”，方向由符号统一处理
-#define ERR_NEG_AT0_A       0.004f  // 10mA @ ~0A
-#define ERR_NEG_ATFS_A      0.024f  // 50mA @ -3A
+#define ERR_NEG_AT0_A       -0.008f  // 10mA @ ~0A
+#define ERR_NEG_ATFS_A      0.028f  // 50mA @ -3A
 
 // 小电流死区（抗抖），可按噪声调整
-#define I_DEADBAND_A        0.0025f  // 2.5mA
+// #define I_DEADBAND_A        0.0025f  // 2.5mA
+#define I_DEADBAND_A        0.008f  // 8mA
 // 硬件与标定数值
 #define RSHUNT           0.1f      // 采样电阻
 #define I_IDLE_A         0.006f    // <6mA 视为无负载
@@ -110,19 +113,19 @@ static inline float V_DV(float v_raw) { return v_raw - V_REF; }
 
 // 分档校准（斜率/零点），后续实测再填；默认1与0表示未校准
 // Ω 档（≤510Ω）
-#define GAIN_OHM    1.0255f
+#define GAIN_OHM    1.016f
 #define OFFS_OHM    0.0f
 
 // kΩ 档（0.51k ~ 51kΩ）
-#define GAIN_KOHM   1.0494f
-#define OFFS_KOHM   (-135.691f)
+#define GAIN_KOHM   1.04f
+#define OFFS_KOHM   0.f
 
 // MΩ 档分段（≥75kΩ）
 #define MOHM_SPLIT_OHMS   220000.0f   // 220k 为分界
-#define GAIN_MOHM_LOW     1.0197f   // 75k~220k
-#define OFFS_MOHM_LOW     (-253.17f)
-#define GAIN_MOHM_HIGH    1.0591f   // ≥470k
-#define OFFS_MOHM_HIGH    (-30288.99f)
+#define GAIN_MOHM_LOW     1.02f   // 75k~220k
+#define OFFS_MOHM_LOW     0.f
+#define GAIN_MOHM_HIGH    1.04f   // ≥470k
+#define OFFS_MOHM_HIGH    0.f
 // 电阻表档位
 typedef enum { RANGE_OHM = 0, RANGE_KOHM, RANGE_MOHM } ohm_range_t;
 // LCD 显示
@@ -738,7 +741,7 @@ static void LCD_DISPLAY_UPDATE(void)
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_A<<4;
                 dotpos = 1;
                 // 由于零点漂移，实际上到不了3A，只能的到2.8A
-                if (i >= 2.95f){
+                if (i >= 2.94f){
                     // 显示溢出
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
                     i = I_FULLSCALE_A;
@@ -766,7 +769,7 @@ static void LCD_DISPLAY_UPDATE(void)
                     rx = 0.0f;
                 }
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
-                if (!(TIM1->CR1 & 1))// g_ohm.st == OHM_S_MEASURE &&
+                if (!(TIM1->CR1 & 1) && g_ohm.st == OHM_S_MEASURE)
                 {
                     PWM_Cmd(TIM1, ENABLE);
                 }
@@ -977,24 +980,28 @@ void VoltTask_Update(void)
     // 减缓微小的波动
     float v_tmp = Volt_From_DV(dv);    // 真实输入（V，带正负号）
     // 正向零点漂移
-    v_tmp += VOLT_ZERO_OFFSET;
+    // v_tmp += VOLT_ZERO_OFFSET;
     
     float vabs = fabsf(v_tmp);
     // 门限电压
     if (vabs <= 0.04f) 
-        v_tmp = 0.0f;
+        v_tmp = 0.f;
+    else if (vabs <= VOLT_ZERO_OFFSET) 
+        v_tmp *= 0.5f;
     else {
-    // ③ 正/反向线性误差模型扣除
-    float e = _interp_err(vabs, -0.04, +0.04, VOLT_MAX_V);
-    if (v_tmp >= 0.04f) {
-        // 正向误差：读数“偏高” → 需要减去一个值
-        vabs -= e;
-    } else {
-        // 反向误差：读数“偏低”（更负） → 需要加回一个值
-        vabs += e;
+        // 正向零点漂移：重新测量正负电压的误差-12V -6V -0.1V +0.1V +6V +12V
+        vabs += VOLT_ZERO_OFFSET;
+        // ③ 正/反向线性误差模型扣除
+        // float e = _interp_err(vabs, 0, 0.04f, VOLT_MAX_V);
+        // if (v_tmp >= 0.0f) {
+        //     // 正向误差
+        //     vabs += e;
+        // } else {
+        //     // 反向误差
+        //     vabs -= e;
+        // }
+        v_tmp = v_tmp >= 0.0f ? vabs : -vabs;
     }
-    v_tmp = v_tmp >= 0.0f ? vabs : -vabs;
-}
     // float delta = fabs(v_tmp-g_volt.last_v);
     // if (delta <= 0.05f)
     // {
@@ -1052,10 +1059,10 @@ static inline float current_compensate(float i_meas)
 
     // ③ 正/反向分开线性误差模型并扣除
     float iabs = fabsf(i);
-    if (i >= 0.0f) {
+    if (i >= 0) {
         // 正向误差：读数“偏高” → 需要减去一个正的幅值
         float e = _interp_err(iabs, ERR_POS_AT0_A, ERR_POS_ATFS_A, I_FULLSCALE_A);
-        i -= e;
+        i += e*0.5f;
         if (i<0.f)
         {
             i=0.f;
@@ -1063,7 +1070,7 @@ static inline float current_compensate(float i_meas)
     } else {
         // 反向误差：读数“偏低”（更负） → 需要加回一个幅值
         float e = _interp_err(iabs, ERR_NEG_AT0_A, ERR_NEG_ATFS_A, I_FULLSCALE_A);
-        i += e;
+        i -= e*0.5f;
         if (i>0.f)
         {
             i=0.f;
@@ -1212,6 +1219,9 @@ void OhmTask_Update(void)
         {
             g_ohm.range = RANGE_OHM;
             set_range_pins(g_ohm.range);
+            // 跳过这一次刷新LCD，防止换挡时读到低电阻错误地报警
+            // g_ohm.rx_display = 500;//保留值
+            g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
         }
         // kΩ档 测量 51kΩ以上的电阻 切MΩ档
         else if (g_ohm.vin>1.817f)
@@ -1223,13 +1233,6 @@ void OhmTask_Update(void)
         g_ohm.st = OHM_S_MEASURE;
     } else {
         g_ohm.vin = read_vin(AVG_N);
-
-        // Ω档忽略小电压波动
-        if (g_ohm.range == RANGE_OHM && g_ohm.vin <= 0.1f)
-        {
-            g_ohm.rx_display = 0;
-            return;
-        }
 
         // 计算 Rx（原始）
         float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
@@ -1250,8 +1253,6 @@ void OhmTask_Update(void)
                 rx = rx_raw * GAIN_MOHM_HIGH + OFFS_MOHM_HIGH;
             }
         }
-
-        g_ohm.rx_display = rx;
         
         // 超出测量范围 时回去选档
         switch (g_ohm.range)
@@ -1260,7 +1261,7 @@ void OhmTask_Update(void)
             if (rx > 510.0f) {
                 g_ohm.st = OHM_S_SELECT_RANGE;
                 // 重置LCD刷新的计时器，防止换挡时刷新屏和报警
-                g_lcd_buf.last_update_ms = now + VOLT_SAMPLE_PERIOD_MS;
+                // g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
             }
             break;
         case RANGE_KOHM:
@@ -1277,6 +1278,13 @@ void OhmTask_Update(void)
             break;
         }
 
+        if (g_ohm.st == OHM_S_SELECT_RANGE)
+        {
+            // TODO: 测试重置LCD刷新的计时器，防止换挡时刷新屏和报警
+            g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
+        }
+
+        g_ohm.rx_display = rx;
     }
 }
 
@@ -1410,7 +1418,7 @@ int main (void)
  
     // 测试电阻表三个档位的换挡阈值
     MultimeterInit();
-    // g_ohm.range = RANGE_OHM;
+    // g_ohm.range = RANGE_KOHM;
     // set_range_pins(g_ohm.range);
 
     // 进入 mA 档
