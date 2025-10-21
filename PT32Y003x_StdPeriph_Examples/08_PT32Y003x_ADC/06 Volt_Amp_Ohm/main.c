@@ -110,22 +110,20 @@ static inline float V_DV(float v_raw) { return v_raw - V_REF; }
 #define RS_OHM_RAW          51.0f     // 51Ω
 #define RS_KOHM_RAW         5100.0f     // 5.1kΩ
 #define RS_MOHM_RAW         510000.0f     // 510kΩ
-
-// 分档校准（斜率/零点），后续实测再填；默认1与0表示未校准
-// Ω 档（≤510Ω）
-#define GAIN_OHM    1.016f
+// Ω 档（≤510Ω）  — 实测略低约1.5%
+#define GAIN_OHM    1.015f
 #define OFFS_OHM    0.0f
 
-// kΩ 档（0.51k ~ 51kΩ）
-#define GAIN_KOHM   1.04f
-#define OFFS_KOHM   0.f
+// kΩ 档（0.51k ~ 51kΩ） — 实测略低约1%
+#define GAIN_KOHM   1.010f
+#define OFFS_KOHM   0.0f
 
-// MΩ 档分段（≥75kΩ）
-#define MOHM_SPLIT_OHMS   220000.0f   // 220k 为分界
-#define GAIN_MOHM_LOW     1.02f   // 75k~220k
-#define OFFS_MOHM_LOW     0.f
-#define GAIN_MOHM_HIGH    1.04f   // ≥470k
-#define OFFS_MOHM_HIGH    0.f
+// MΩ 档分段（≥75kΩ） — 实测偏低约4%
+#define MOHM_SPLIT_OHMS   220000.0f
+#define GAIN_MOHM_LOW     1.044f   // 75k~220k 区间
+#define OFFS_MOHM_LOW     0.0f
+#define GAIN_MOHM_HIGH    1.044f   // ≥470k 同样修正
+#define OFFS_MOHM_HIGH    0.0f
 // 电阻表档位
 typedef enum { RANGE_OHM = 0, RANGE_KOHM, RANGE_MOHM } ohm_range_t;
 // LCD 显示
@@ -1260,7 +1258,7 @@ void OhmTask_Update(void)
         case RANGE_OHM:
             if (rx > 510.0f) {
                 g_ohm.st = OHM_S_SELECT_RANGE;
-                // 重置LCD刷新的计时器，防止换挡时刷新屏和报警
+                // 重置LCD刷新的计时器，防止换挡时刷新屏时报警
                 // g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
             }
             break;
@@ -1280,7 +1278,7 @@ void OhmTask_Update(void)
 
         if (g_ohm.st == OHM_S_SELECT_RANGE)
         {
-            // TODO: 测试重置LCD刷新的计时器，防止换挡时刷新屏和报警
+            // 重置LCD刷新的计时器，防止换挡时刷新屏时报警
             g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
         }
 
