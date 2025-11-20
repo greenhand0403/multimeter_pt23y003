@@ -1,72 +1,85 @@
-/******************************************************************************
-  * @file    PT32Y003x_it.c
-  * @author  应用开发团队
-  * @version V1.6.0
-  * @date    2023/12/18
-  * @brief    This file provides all interrupt service routine.
-  *          
-  ******************************************************************************
-  * @attention
-  *
-  *
-  *****************************************************************************/
-  
-/* Includes ------------------------------------------------------------------------------------------------*/
-#include "PT32Y003x_it.h"
-#include <PT32Y003x_uart.h>
+#include "PT32Y003x.h"
+#include "PT32Y003x_uart.h"
 
+// ===== 外部变量声明 =====
+extern u8 rx_buffer[64];
+extern u16 rx_index;
+extern u8 bluetooth_ready;
 
-/** @defgroup IT
-  * @brief IT driver modules
-  * @{
-  */
-  
-/* Private typedef -----------------------------------------------------------------------------------------*/
-/* Private define ------------------------------------------------------------------------------------------*/
-/* Private macro -------------------------------------------------------------------------------------------*/
-/* Private variables ---------------------------------------------------------------------------------------*/
-/* Private function prototypes -----------------------------------------------------------------------------*/
-/* Private functions ---------------------------------------------------------------------------------------*/
-
-
-
-/**
-* @brief NMI中断服务函数
-* @param None
-* @retval None
-*/
-void NMI_Handler(void)
+// ===== 处理蓝牙响应 =====
+void ProcessBluetoothResponse(void)
 {
+    // 检查是否是OK响应
+    if (rx_index >= 4 && 
+        rx_buffer[0] == 'O' && 
+        rx_buffer[1] == 'K' && 
+        rx_buffer[2] == 0x0D && 
+        rx_buffer[3] == 0x0A)
+    {
+        bluetooth_ready = 1;
+        // 可以在这里添加蓝牙连接成功的处理
+    }
+    else
+    {
+        // 处理其他蓝牙响应
+        // 例如：连接状态、错误信息等
+    }
 }
 
-/**
-* @brief HardFault中断服务函数
-* @param None
-* @retval None
-*/
-void HardFault_Handler(void)
+// ===== UART0中断服务函数 =====
+void UART0_IRQHandler(void)
 {
-  	while (1);
+    if (UART_GetITStatus(UART0, UART_IT_RXNEI) != RESET)
+    {
+        // 读取接收到的数据
+        u8 received_byte = UART_ReceiveData(UART0);
+        
+        // 将数据存入缓冲区
+        if (rx_index < 63) // 防止缓冲区溢出
+        {
+            rx_buffer[rx_index++] = received_byte;
+            
+            // 检查是否接收到回车换行（0x0D 0x0A）
+            if (received_byte == 0x0A && rx_index >= 2 && rx_buffer[rx_index-2] == 0x0D)
+            {
+                // 处理接收到的完整行数据
+                ProcessBluetoothResponse();
+                rx_index = 0; // 清空缓冲区
+            }
+        }
+        else
+        {
+            // 缓冲区满，清空
+            rx_index = 0;
+        }
+        
+        // 清除中断标志
+        UART_ClearFlag(UART0, UART_IT_RXNEI);
+    }
 }
 
-/**
-* @brief SVC中断服务函数
-* @param None
-* @retval None
-*/
-void SVC_Handler(void)
+// ===== 其他中断服务函数预留 =====
+void UART1_IRQHandler(void)
 {
+    // UART1当前只用于调试输出，无需接收中断
+    if (UART_GetITStatus(UART1, UART_IT_RXNEI) != RESET)
+    {
+        // 读取并丢弃数据
+        UART_ReceiveData(UART1);
+        UART_ClearFlag(UART1, UART_IT_RXNEI);
+    }
 }
 
-/**
-* @brief PendSV中断服务函数
-* @param None
-* @retval None
-*/
-void PendSV_Handler(void)
+void I2C0_IRQHandler(void)
 {
+    // 预留：MPU6050中断处理
 }
 
+// 其他外设中断函数可根据需要添加
+
+extern volatile uint32_t s_ms_ticks;   // 1ms 计数（全局）
+extern volatile uint32_t s_ms_delay;   // 阻塞式 ms 延时用
+// SysTick 中断：1ms 心跳 + 阻塞延时递减
 /**
 * @brief SysTick中断服务函数
 * @param None
@@ -74,161 +87,6 @@ void PendSV_Handler(void)
 */
 void SysTick_Handler(void)
 {
+  s_ms_ticks++;
+  if (s_ms_delay) s_ms_delay--;
 }
-
-/**
-* @brief PLLFAIL
-* @param None
-* @retval None
-*/
-void HSEFAIL(void)
-{	
-}
-
-/**
-* @brief IMMC中断服务函数
-* @param None
-* @retval None
-*/
-void IMMC_Handler(void)
-{
-}
-
-/**
-* @brief PA中断服务函数
-* @param None
-* @retval None
-*/
-void EXTIA_Handler(void)
-{
-}
-
-/**
-* @brief PB中断服务函数
-* @param None
-* @retval None
-*/
-void EXTIB_Handler(void)
-{
-}
-
-/**
-* @brief PC中断服务函数
-* @param None
-* @retval None
-*/
-void EXTIC_Handler(void)
-{
-}
-
-/**
-* @brief PD中断服务函数
-* @param None
-* @retval None
-*/
-void EXTID_Handler(void)
-{
-}
-
-/**
-* @brief ADC中断服务函数
-* @param None
-* @retval None
-*/
-void ADC_Handler(void)
-{
-}
-
-/**
-* @brief TIMER1中断服务函数
-* @param None
-* @retval None
-*/
-void TIM1_Handler(void)
-{
-}
-
-/**
-* @brief TIMER2中断服务函数
-* @param None
-* @retval None
-*/
-void TIM2_Handler(void)
-{	
-}
-
-/**
-* @brief TIMER3中断服务函数
-* @param None
-* @retval None
-*/
-void TIM3_Handler(void)
-{
-}
-
-/**
-* @brief TIMER4中断服务函数
-* @param None
-* @retval None
-*/
-void TIM4_Handler(void)
-{
-}
-
-/**
-* @brief PVD中断服务函数
-* @param None
-* @retval None
-*/
-void PVD_Handler(void)
-{
-}
-
-/**
-* @brief I2C0中断服务函数
-* @param None
-* @retval None
-*/
-void I2C0_Handler(void)
-{
-}
-
-
-/**
-* @brief SPI0中断服务函数
-* @param None
-* @retval None
-*/
-void SPI0_Handler(void)
-{
-}
-
-
-/**
-* @brief UART0中断服务函数
-* @param None
-* @retval None
-*/
-u16 data_rx[20]={0};
-extern volatile u8 rx_cnt;
-void UART0_Handler(void)
-{
-	if (UART_GetFlagStatus(UART0, UART_FLAG_RXNE)) {
-    if (rx_cnt < 20) data_rx[rx_cnt++] = UART_ReceiveData(UART0);
-}
-}
-
-/**
-* @brief UART1中断服务函数
-* @param None
-* @retval None
-*/
-void UART1_Handler(void)
-{	
-}
-
-
-/**
-  * @}
-  */
-
