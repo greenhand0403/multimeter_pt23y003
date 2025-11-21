@@ -1,21 +1,21 @@
 #include "ledDisplay.h"
 #include <PT32Y003x_gpio.h>
-// ÏÔÊ¾1234
-// LEDDisplay_SetDigit(0, 0x06); // ÏÔÊ¾1
-// LEDDisplay_SetDigit(1, 0x5B); // ÏÔÊ¾2
-// LEDDisplay_SetDigit(2, 0x4F); // ÏÔÊ¾3
-// LEDDisplay_SetDigit(3, 0x66); // ÏÔÊ¾4
-// LEDDisplay_SetDigit(4, 0x01); // ÏÔÊ¾"V"£¨ÀıÈç×Ô¶¨Òå£©
-// ÑÏ½÷Ò»µã¿ÉÒÔĞ´³ÉÖ»¶ÁµÄ³£Á¿£¬Ğ´³É±äÁ¿´«²Î¸øº¯Êı±àÒëÊ±²»»á±¨¸ñÊ½×ª»»µÄ¾¯¸æ
-// ¶ÎÂë¶¨Òå£¨¹²Ñô£¬1µãÁÁ£©
+// æ˜¾ç¤º1234
+// LEDDisplay_SetDigit(0, 0x06); // æ˜¾ç¤º1
+// LEDDisplay_SetDigit(1, 0x5B); // æ˜¾ç¤º2
+// LEDDisplay_SetDigit(2, 0x4F); // æ˜¾ç¤º3
+// LEDDisplay_SetDigit(3, 0x66); // æ˜¾ç¤º4
+// LEDDisplay_SetDigit(4, 0x01); // æ˜¾ç¤º"V"ï¼ˆä¾‹å¦‚è‡ªå®šä¹‰ï¼‰
+// ä¸¥è°¨ä¸€ç‚¹å¯ä»¥å†™æˆåªè¯»çš„å¸¸é‡ï¼Œå†™æˆå˜é‡ä¼ å‚ç»™å‡½æ•°ç¼–è¯‘æ—¶ä¸ä¼šæŠ¥æ ¼å¼è½¬æ¢çš„è­¦å‘Š
+// æ®µç å®šä¹‰ï¼ˆå…±é˜³ï¼Œ1ç‚¹äº®ï¼‰
 GPIO_TypeDef * COM_PORT_ARRAY[] = {GPIOD, GPIOB, GPIOB, GPIOB, GPIOC};
 uint16_t COM_PIN_ARRAY[] = {GPIO_Pin_4, GPIO_Pin_1, GPIO_Pin_5, GPIO_Pin_4, GPIO_Pin_7};
 GPIO_TypeDef * SEG_PORT_ARRAY[] = {GPIOC, GPIOC, GPIOC, GPIOC, GPIOD, GPIOD, GPIOD};
 uint16_t SEG_PIN_ARRAY[] = {GPIO_Pin_3, GPIO_Pin_4, GPIO_Pin_5, GPIO_Pin_6, GPIO_Pin_1, GPIO_Pin_2, GPIO_Pin_3};
 
-// µ±Ç°ÕıÔÚË¢ĞÂµÄÎ»
+// å½“å‰æ­£åœ¨åˆ·æ–°çš„ä½
 static volatile int current_col = 0;
-volatile uint8_t display_buffer[5] = {0};  // Ã¿Î»7¶ÎµÄ¶ÎÂë
+volatile uint8_t display_buffer[5] = {0};  // æ¯ä½7æ®µçš„æ®µç 
 
 void LEDDisplay_Init(void)
 {
@@ -36,7 +36,7 @@ void LEDDisplay_Init(void)
         GPIO_Init(SEG_PORT_ARRAY[i], &GPIO_InitStructure);
         GPIO_ResetBits(SEG_PORT_ARRAY[i], SEG_PIN_ARRAY[i]);
     }
-	// ½ûÓÃ SWD ½Ó¿Ú£¬Ê¹SWµ÷ÊÔ¸´ÓÃµÄ PD1,PC7 ¿É×ÔÓÉÊ¹ÓÃ
+	// ç¦ç”¨ SWD æ¥å£ï¼Œä½¿SWè°ƒè¯•å¤ç”¨çš„ PD1,PC7 å¯è‡ªç”±ä½¿ç”¨
 	GPIO_DigitalRemapConfig(AFIOC, GPIO_Pin_7, AFIO_AF_None, DISABLE);
 	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_7;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OutPP;
@@ -53,26 +53,26 @@ void LEDDisplay_Init(void)
 
 void LEDDisplay_UpdateColumn(void)
 {
-    // ¹Ø±Õµ±Ç°ÁĞ
+    // å…³é—­å½“å‰åˆ—
     GPIO_SetBits(COM_PORT_ARRAY[current_col], COM_PIN_ARRAY[current_col]);
 
-    // Çå³ıËùÓĞ¶Î
+    // æ¸…é™¤æ‰€æœ‰æ®µ
     for (int i = 0; i < 7; i++) {
         GPIO_ResetBits(SEG_PORT_ARRAY[i], SEG_PIN_ARRAY[i]);
     }
 
-    // ÇĞ»»µ½ÏÂÒ»ÁĞ
+    // åˆ‡æ¢åˆ°ä¸‹ä¸€åˆ—
     current_col = (current_col + 1) % 5;
     uint8_t seg_code = display_buffer[current_col];
 
-    // ÉèÖÃĞÂ¶ÎÂë£¨µÍÎ»´ú±íSEG0£©
+    // è®¾ç½®æ–°æ®µç ï¼ˆä½ä½ä»£è¡¨SEG0ï¼‰
     for (int i = 0; i < 7; i++) {
         if (seg_code & (1 << i)) {
-            GPIO_SetBits(SEG_PORT_ARRAY[i], SEG_PIN_ARRAY[i]); // µãÁÁ¶Î
+            GPIO_SetBits(SEG_PORT_ARRAY[i], SEG_PIN_ARRAY[i]); // ç‚¹äº®æ®µ
         }
     }
 
-    // ¿ªÆôĞÂÁĞ
+    // å¼€å¯æ–°åˆ—
     GPIO_ResetBits(COM_PORT_ARRAY[current_col], COM_PIN_ARRAY[current_col]);
 }
 
@@ -91,7 +91,7 @@ void LEDDisplay_Clear(void)
 }
 void Display_SetAll(void)
 {
-	// µãÁÁËùÓĞ¶Î
+	// ç‚¹äº®æ‰€æœ‰æ®µ
 	GPIO_InitTypeDef GPIO_InitStructure;
 	for (int i = 0; i < 5; i++) {
 		GPIO_InitStructure.GPIO_Pin = COM_PIN_ARRAY[i];

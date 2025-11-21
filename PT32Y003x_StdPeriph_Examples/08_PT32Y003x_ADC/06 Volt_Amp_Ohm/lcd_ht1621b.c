@@ -1,31 +1,31 @@
 #include "lcd_ht1621b.h"
 #define DelayT delay_us(100)
-// ½¨ÒéĞÂÔö£º·Ö±ğ´¦Àí MSB-first Óë LSB-first
+// å»ºè®®æ–°å¢ï¼šåˆ†åˆ«å¤„ç† MSB-first ä¸ LSB-first
 static void HT1621_WriteBits_MSB(uint8_t data, uint8_t cnt)
 {
     while (cnt--) {
-        // WR µÍµçÆ½Ê¹ÄÜ ¿ªÊ¼Ğ´
+        // WR ä½ç”µå¹³ä½¿èƒ½ å¼€å§‹å†™
         LCD_WR_LOW(); DelayT;
         if (data & 0x80) LCD_DATA_HIGH(); else LCD_DATA_LOW();
         DelayT;
-        // WR ¸ßµçÆ½Ê¹ÄÜ ½áÊøĞ´
+        // WR é«˜ç”µå¹³ä½¿èƒ½ ç»“æŸå†™
         LCD_WR_HIGH(); DelayT;
         data <<= 1;
     }
 }
 
-// Ğ´ 4bit Êı¾İ£º°´ D0..D3£¨LSB-first£©
-static void HT1621_Write4_LSB(uint8_t d4) // Ö»ÓÃµÍ 4 Î»
+// å†™ 4bit æ•°æ®ï¼šæŒ‰ D0..D3ï¼ˆLSB-firstï¼‰
+static void HT1621_Write4_LSB(uint8_t d4) // åªç”¨ä½ 4 ä½
 {
     for (uint8_t i = 0; i < 4; i++) {
         LCD_WR_LOW(); DelayT;
         if (d4 & 0x01) LCD_DATA_HIGH(); else LCD_DATA_LOW();
         DelayT;
         LCD_WR_HIGH(); DelayT;
-        d4 >>= 1; // µÍÎ»ÏÈĞĞ
+        d4 >>= 1; // ä½ä½å…ˆè¡Œ
     }
 }
-// ½ö´òÒ»Î» don't care£¨ÎŞËùÎ½ 0/1£¬Ö»Ğè 1 ´Î WR ÉÏÉıÑØ£©
+// ä»…æ‰“ä¸€ä½ don't careï¼ˆæ— æ‰€è°“ 0/1ï¼Œåªéœ€ 1 æ¬¡ WR ä¸Šå‡æ²¿ï¼‰
 static inline void HT1621_Write1bit(uint8_t bit)
 {
     LCD_WR_LOW();  DelayT;
@@ -34,63 +34,63 @@ static inline void HT1621_Write1bit(uint8_t bit)
     LCD_WR_HIGH(); DelayT;
 }
 
-/// @brief ·¢ËÍÃüÁî
-/// @param cmd ÃüÁî
-/// ·¢ËÍÃüÁî£º100 + C7..C0 + X
+/// @brief å‘é€å‘½ä»¤
+/// @param cmd å‘½ä»¤
+/// å‘é€å‘½ä»¤ï¼š100 + C7..C0 + X
 void HT1621_SendCommand(uint8_t cmd)
 {
-    // CS µÍµçÆ½Ê¹ÄÜ
+    // CS ä½ç”µå¹³ä½¿èƒ½
     LCD_CS_LOW();
     HT1621_WriteBits_MSB(0x80, 3);       // 100
     HT1621_WriteBits_MSB(cmd, 8);        // C7..C0
-    // HT1621_Write4_LSB(0x0);              // 1 ¸ö don't care£¨´ò 1 ´Î WR ÉÏÉıÑØ£©
+    // HT1621_Write4_LSB(0x0);              // 1 ä¸ª don't careï¼ˆæ‰“ 1 æ¬¡ WR ä¸Šå‡æ²¿ï¼‰
     HT1621_Write1bit(0);
     LCD_CS_HIGH();
 }
 
-// Á¬ĞøĞ´Êı¾İ£º101 + A5..A0 + (D0..D3)*N
+// è¿ç»­å†™æ•°æ®ï¼š101 + A5..A0 + (D0..D3)*N
 void HT1621_WriteData(uint8_t addr, const uint8_t *data, uint8_t lenBytes)
 {
     LCD_CS_LOW();
     HT1621_WriteBits_MSB(0xA0, 3);       // 101
     HT1621_WriteBits_MSB(addr << 2, 6);  // A5..A0 (MSB-first)
 
-    // Ã¿¸ö×Ö½Ú²ğ³ÉÁ½´Î 4bit£¬ÇÒÃ¿ 4bit ÓÃ LSB-first
+    // æ¯ä¸ªå­—èŠ‚æ‹†æˆä¸¤æ¬¡ 4bitï¼Œä¸”æ¯ 4bit ç”¨ LSB-first
     for (uint8_t i = 0; i < lenBytes; i++) {
         uint8_t b = data[i];
-        HT1621_Write4_LSB(b & 0x0F);     // µÍ 4 Î» -> µØÖ· addr
-        HT1621_Write4_LSB(b >> 4);       // ¸ß 4 Î» -> µØÖ· addr+1
+        HT1621_Write4_LSB(b & 0x0F);     // ä½ 4 ä½ -> åœ°å€ addr
+        HT1621_Write4_LSB(b >> 4);       // é«˜ 4 ä½ -> åœ°å€ addr+1
     }
     LCD_CS_HIGH();
 }
 
-/// @brief Çå³şËùÓĞ¶Î
+/// @brief æ¸…æ¥šæ‰€æœ‰æ®µ
 /// @param  
 void HT1621_Clear(void) {
     uint8_t z[16];
-    for (int i = 0; i < 16; ++i) z[i] = 0x00;   // ¸²¸Ç 0x00..0x1F ¹² 32 ¸ö 4bit
+    for (int i = 0; i < 16; ++i) z[i] = 0x00;   // è¦†ç›– 0x00..0x1F å…± 32 ä¸ª 4bit
     HT1621_WriteData(0x00, z, 16);
 }
-// ÍÆ¼öµÄ³õÊ¼»¯Ë³ĞòÓëÃüÁîÖµ
+// æ¨èçš„åˆå§‹åŒ–é¡ºåºä¸å‘½ä»¤å€¼
 void HT1621_Init(void)
 {
     LCD_CS_HIGH();
     LCD_WR_HIGH();
     LCD_DATA_HIGH();
 
-    // Òı½Å³õÊ¼»¯ÂÔ
+    // å¼•è„šåˆå§‹åŒ–ç•¥
     HT1621_SendCommand(0x01); // SYS EN
     HT1621_SendCommand(0x18); // RC 256K
     HT1621_SendCommand(0x29); // BIAS=1/3, COM=4
-    // HT1621_SendCommand(0x05); // WDT DIS£¨¿ÉÑ¡£©
+    // HT1621_SendCommand(0x05); // WDT DISï¼ˆå¯é€‰ï¼‰
     HT1621_SendCommand(0x03); // LCD ON
     HT1621_Clear();
 }
 
-// ===== ÏÔÊ¾Êı×Ö£¨0~9£©µÄ 7 ¶ÎÓ³Éä£º{L_nibble, R_nibble} =====
-// ¶ÎÎ»ÃüÃû ABCDEFG£¬Ë³Ê±Õë´Ó¶¥ºá¿ªÊ¼£¬G ÎªÖĞºá¡£
+// ===== æ˜¾ç¤ºæ•°å­—ï¼ˆ0~9ï¼‰çš„ 7 æ®µæ˜ å°„ï¼š{L_nibble, R_nibble} =====
+// æ®µä½å‘½å ABCDEFGï¼Œé¡ºæ—¶é’ˆä»é¡¶æ¨ªå¼€å§‹ï¼ŒG ä¸ºä¸­æ¨ªã€‚
 // L: A(0x1) F(0x2) E(0x4) D(0x8)
-// R: B(0x1) G(0x2) C(0x4) [RµÄ0x8¿ÉÁô×÷DP]
+// R: B(0x1) G(0x2) C(0x4) [Rçš„0x8å¯ç•™ä½œDP]
 static const uint8_t kDigitMap_7seg[10][2] = {
     /*0*/ {0x0F, 0x05},  // A F E D  +  B C
     /*1*/ {0x00, 0x05},  //           +  B C
@@ -104,20 +104,20 @@ static const uint8_t kDigitMap_7seg[10][2] = {
     /*9*/ {0x0B, 0x07},  // A F   D  +  B G C
 };
     
-// Ã¿Ò»Î»µÄ¡°×óµØÖ·¡±£¨ÓÒµØÖ·=×óµØÖ·+1£©
+// æ¯ä¸€ä½çš„â€œå·¦åœ°å€â€ï¼ˆå³åœ°å€=å·¦åœ°å€+1ï¼‰
 static const uint8_t kDigitAddrL[4] = {
     ADDR_FIRST_L,  ADDR_SECOND_L,  ADDR_THIRD_L,  ADDR_FOURTH_L
 };
     
-// Ğ´Èë¡°Ä³Ò»Î»¡±µÄ L/R Á½¸ö 4bit£¨Ò»´Î·¢ 1 ×Ö½Ú£¬µÍ4Ğ´L£¬¸ß4Ğ´R£©
+// å†™å…¥â€œæŸä¸€ä½â€çš„ L/R ä¸¤ä¸ª 4bitï¼ˆä¸€æ¬¡å‘ 1 å­—èŠ‚ï¼Œä½4å†™Lï¼Œé«˜4å†™Rï¼‰
 static inline void LCD_WriteDigitPair(uint8_t addrL, uint8_t nibL, uint8_t nibR)
 {
     uint8_t b = (uint8_t)((nibR << 4) | (nibL & 0x0F));
     HT1621_WriteData(addrL, &b, 1);
 }
-/// @brief Çå 4 Î»£¨½öÊıÂë¶Î£¬²»¶¯ÆäËüÎ´ÓÃµØÖ·£©
-/// @param ÎŞ
-/// @return ÎŞ
+/// @brief æ¸… 4 ä½ï¼ˆä»…æ•°ç æ®µï¼Œä¸åŠ¨å…¶å®ƒæœªç”¨åœ°å€ï¼‰
+/// @param æ— 
+/// @return æ— 
 void LCD_Clear4Digits(void)
 {
     uint8_t z = 0x00;
@@ -125,11 +125,11 @@ void LCD_Clear4Digits(void)
         HT1621_WriteData(kDigitAddrL[i], &z, 1);
     }
 }
-/// @brief ÏÔÊ¾Êı×Ö
-/// @param pos Î»ÖÃ
-/// @param val Öµ
-/// @param dp ÊÇ·ñÏÔÊ¾Ğ¡Êıµã
-/// pos: 0..3£¨´Ó×óµ½ÓÒ£©£¬val: 0..9£¬dp=true ÔòÔÚ¸ÃÎ»ÓÒ°ë×Ö½Ú¼ÓĞ¡Êıµã(0x8)
+/// @brief æ˜¾ç¤ºæ•°å­—
+/// @param pos ä½ç½®
+/// @param val å€¼
+/// @param dp æ˜¯å¦æ˜¾ç¤ºå°æ•°ç‚¹
+/// pos: 0..3ï¼ˆä»å·¦åˆ°å³ï¼‰ï¼Œval: 0..9ï¼Œdp=true åˆ™åœ¨è¯¥ä½å³åŠå­—èŠ‚åŠ å°æ•°ç‚¹(0x8)
 void LCD_ShowDigit(uint8_t pos, uint8_t val, bool dp)
 {
     if (pos > 3 || val > 9) return;
@@ -139,8 +139,8 @@ void LCD_ShowDigit(uint8_t pos, uint8_t val, bool dp)
     LCD_WriteDigitPair(kDigitAddrL[pos], nibL, nibR);
 }
     
-/// @brief ÏÔÊ¾¼òµ¥ÕûÊı 0000~9999£¨²»¼ÓÍ¼±ê/Ğ¡Êıµã£©
-/// @param value Öµ
+/// @brief æ˜¾ç¤ºç®€å•æ•´æ•° 0000~9999ï¼ˆä¸åŠ å›¾æ ‡/å°æ•°ç‚¹ï¼‰
+/// @param value å€¼
 void LCD_ShowNumber4(uint16_t value)
 {
     if (value > 9999) value = 9999;
@@ -157,14 +157,14 @@ void LCD_ShowNumber4(uint16_t value)
 
 static bool last_minus = false;
 static bool last_ovf   = false;
-// === µçÑ¹±í×¨ÓÃ ===
-// scaled_2dp = |V| * 100£¨ËÄÉáÎåÈë£©£¬·¶Î§ 0..1200£¨Íâ²¿ÒÑ¾­Ç¯Î»µ½ 12.00£©
-// - µÚ dot_pos Î»£¨´Ó×óÊıÆğ1¿ªÊ¼£©£ºµãÁÁĞ¡Êıµã
+// === ç”µå‹è¡¨ä¸“ç”¨ ===
+// scaled_2dp = |V| * 100ï¼ˆå››èˆäº”å…¥ï¼‰ï¼ŒèŒƒå›´ 0..1200ï¼ˆå¤–éƒ¨å·²ç»é’³ä½åˆ° 12.00ï¼‰
+// - ç¬¬ dot_pos ä½ï¼ˆä»å·¦æ•°èµ·1å¼€å§‹ï¼‰ï¼šç‚¹äº®å°æ•°ç‚¹
 void LCD_Show_digits(uint16_t scaled_2dp, uint8_t dot_pos)
 {
     if (dot_pos==4)
     {
-        // ÏÔÊ¾Å·Ä·±íÎ´½ÓÈëµÄ×´Ì¬ - - - -
+        // æ˜¾ç¤ºæ¬§å§†è¡¨æœªæ¥å…¥çš„çŠ¶æ€ - - - -
         uint8_t tmp = (uint8_t)(0x2 << 4);
         for (uint8_t addr = ADDR_FIRST_L; addr < ADDR_FIRST_L+8; addr+=2)
         {
@@ -181,7 +181,7 @@ void LCD_Show_digits(uint16_t scaled_2dp, uint8_t dot_pos)
     uint8_t d2 = (uint8_t)((scaled_2dp / 10)   % 10);
     uint8_t d3 = (uint8_t)( scaled_2dp         % 10);
 
-    // Î»0£ºÇ§Î»¡£ÎªÃÀ¹Û£¬Ç§Î»=0Ê±¿ÉÁô¿Õ£¨ÄãÒª±£ÁôÇ°µ¼Áã¾Í¸Ä³É LCD_ShowDigit(0, d0, false)£©
+    // ä½0ï¼šåƒä½ã€‚ä¸ºç¾è§‚ï¼Œåƒä½=0æ—¶å¯ç•™ç©ºï¼ˆä½ è¦ä¿ç•™å‰å¯¼é›¶å°±æ”¹æˆ LCD_ShowDigit(0, d0, false)ï¼‰
     // if (d0 == 0) {
         // uint8_t z = 0x00;
         // HT1621_WriteData(ADDR_FIRST_L, &z, 1);
@@ -189,14 +189,14 @@ void LCD_Show_digits(uint16_t scaled_2dp, uint8_t dot_pos)
         LCD_ShowDigit(0, d0, dot_pos==1);
     // }
 
-    // Î»1£º°ÙÎ» + V ·ûºÅ + ÖĞ¼äĞ¡Êıµã + ¸ººÅ/Òç³ö±êÖ¾
-    // ÏÈÄÃµ½¡°Êı×Ö 0~9¡±µÄ¶Î
+    // ä½1ï¼šç™¾ä½ + V ç¬¦å· + ä¸­é—´å°æ•°ç‚¹ + è´Ÿå·/æº¢å‡ºæ ‡å¿—
+    // å…ˆæ‹¿åˆ°â€œæ•°å­— 0~9â€çš„æ®µ
     // uint8_t nibL = kDigitMap_7seg[d1][0];
     // uint8_t nibR = kDigitMap_7seg[d1][1];
-    // nibR |= 0x8;            // µÚ¶şÎ»µÄĞ¡Êıµã DP£¨¡°ÖĞ¼äÄÇ¸öĞ¡Êıµã¡±£©
+    // nibR |= 0x8;            // ç¬¬äºŒä½çš„å°æ•°ç‚¹ DPï¼ˆâ€œä¸­é—´é‚£ä¸ªå°æ•°ç‚¹â€ï¼‰
     // LCD_WriteDigitPair(ADDR_SECOND_L, nibL, nibR);
     LCD_ShowDigit(1, d1, dot_pos==2);
-    // Î»2¡¢Î»3£ºÊ®Î»¡¢¸öÎ»
+    // ä½2ã€ä½3ï¼šåä½ã€ä¸ªä½
     LCD_ShowDigit(2, d2, dot_pos==3);
 
     LCD_ShowDigit(3, d3, false);
@@ -208,32 +208,32 @@ void LCD_ShowIcon(uint8_t icon1, uint8_t icon2)
     HT1621_WriteData(ADDR_BAT100_BAT75, &icon2, 1);
 }
 
-// ±éÀú SEG9~SEG20£¨0x09~0x14£©£¬Ã¿´ÎÖ»µãÁÁÒ»¸ö¶Î£¬Í£ 5 Ãë
+// éå† SEG9~SEG20ï¼ˆ0x09~0x14ï¼‰ï¼Œæ¯æ¬¡åªç‚¹äº®ä¸€ä¸ªæ®µï¼Œåœ 5 ç§’
 void LCD_SegWalkTest(void)
 {
     while (1) {
         for (uint8_t addr = 0x09; addr <= 0x14; ++addr) {
             for (uint8_t bit = 0x01; bit <= 0x08; bit <<= 1) {
-                HT1621_Clear();                 // ÏÈÇåÆÁ£¬±ÜÃâ²ĞÓ°
+                HT1621_Clear();                 // å…ˆæ¸…å±ï¼Œé¿å…æ®‹å½±
 
-                // ¼ÆËã¡°³É¶ÔĞ´¡±µÄÆğÊ¼µØÖ·£¨ÆæÊı=×ÔÉí£»Å¼Êı=addr-1£©
+                // è®¡ç®—â€œæˆå¯¹å†™â€çš„èµ·å§‹åœ°å€ï¼ˆå¥‡æ•°=è‡ªèº«ï¼›å¶æ•°=addr-1ï¼‰
                 uint8_t base = (addr & 1) ? addr : (uint8_t)(addr - 1);
 
-                // Ö»µãÁÁÄ¿±ê°ë×Ö½Ú£ºÄ¿±êÊÇ L ¡ú low=bit£»Ä¿±êÊÇ R ¡ú high=bit
+                // åªç‚¹äº®ç›®æ ‡åŠå­—èŠ‚ï¼šç›®æ ‡æ˜¯ L â†’ low=bitï¼›ç›®æ ‡æ˜¯ R â†’ high=bit
                 uint8_t low  = (addr == base) ? bit : 0x00;
                 uint8_t high = (addr == base) ? 0x00 : bit;
 
                 uint8_t one_byte = (uint8_t)((high << 4) | (low & 0x0F));
                 HT1621_WriteData(base, &one_byte, 1);
 
-                delay_ms(1000);                 // Ã¿¶Î¹Û²ì 1 Ãë
+                delay_ms(1000);                 // æ¯æ®µè§‚å¯Ÿ 1 ç§’
             }
         }
     }
 }
 void LCD_AllOn(void)
 {
-    // ¸²¸Ç 0x00..0x1F£¨32¡Á4bit£©¡ú È«¶ÎµãÁÁ
+    // è¦†ç›– 0x00..0x1Fï¼ˆ32Ã—4bitï¼‰â†’ å…¨æ®µç‚¹äº®
     uint8_t ff[16];
     for (int i = 0; i < 16; ++i) ff[i] = 0xFF;
     HT1621_WriteData(0x00, ff, 16);

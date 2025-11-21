@@ -1,15 +1,15 @@
 #include "PT32Y003x.h"
 #include "PT32Y003x_uart.h"
 
-// ===== Íâ²¿±äÁ¿ÉùÃ÷ =====
+// ===== å¤–éƒ¨å˜é‡å£°æ˜ =====
 extern u8 rx_buffer[64];
 extern u16 rx_index;
 extern u8 bluetooth_ready;
 
-// ===== ´¦ÀíÀ¶ÑÀÏìÓ¦ =====
+// ===== å¤„ç†è“ç‰™å“åº” =====
 void ProcessBluetoothResponse(void)
 {
-    // ¼ì²éÊÇ·ñÊÇOKÏìÓ¦
+    // æ£€æŸ¥æ˜¯å¦æ˜¯OKå“åº”
     if (rx_index >= 4 && 
         rx_buffer[0] == 'O' && 
         rx_buffer[1] == 'K' && 
@@ -17,54 +17,54 @@ void ProcessBluetoothResponse(void)
         rx_buffer[3] == 0x0A)
     {
         bluetooth_ready = 1;
-        // ¿ÉÒÔÔÚÕâÀïÌí¼ÓÀ¶ÑÀÁ¬½Ó³É¹¦µÄ´¦Àí
+        // å¯ä»¥åœ¨è¿™é‡Œæ·»åŠ è“ç‰™è¿æ¥æˆåŠŸçš„å¤„ç†
     }
     else
     {
-        // ´¦ÀíÆäËûÀ¶ÑÀÏìÓ¦
-        // ÀıÈç£ºÁ¬½Ó×´Ì¬¡¢´íÎóĞÅÏ¢µÈ
+        // å¤„ç†å…¶ä»–è“ç‰™å“åº”
+        // ä¾‹å¦‚ï¼šè¿æ¥çŠ¶æ€ã€é”™è¯¯ä¿¡æ¯ç­‰
     }
 }
 
-// ===== UART0ÖĞ¶Ï·şÎñº¯Êı =====
+// ===== UART0ä¸­æ–­æœåŠ¡å‡½æ•° =====
 void UART0_IRQHandler(void)
 {
     if (UART_GetITStatus(UART0, UART_IT_RXNEI) != RESET)
     {
-        // ¶ÁÈ¡½ÓÊÕµ½µÄÊı¾İ
+        // è¯»å–æ¥æ”¶åˆ°çš„æ•°æ®
         u8 received_byte = UART_ReceiveData(UART0);
         
-        // ½«Êı¾İ´æÈë»º³åÇø
-        if (rx_index < 63) // ·ÀÖ¹»º³åÇøÒç³ö
+        // å°†æ•°æ®å­˜å…¥ç¼“å†²åŒº
+        if (rx_index < 63) // é˜²æ­¢ç¼“å†²åŒºæº¢å‡º
         {
             rx_buffer[rx_index++] = received_byte;
             
-            // ¼ì²éÊÇ·ñ½ÓÊÕµ½»Ø³µ»»ĞĞ£¨0x0D 0x0A£©
+            // æ£€æŸ¥æ˜¯å¦æ¥æ”¶åˆ°å›è½¦æ¢è¡Œï¼ˆ0x0D 0x0Aï¼‰
             if (received_byte == 0x0A && rx_index >= 2 && rx_buffer[rx_index-2] == 0x0D)
             {
-                // ´¦Àí½ÓÊÕµ½µÄÍêÕûĞĞÊı¾İ
+                // å¤„ç†æ¥æ”¶åˆ°çš„å®Œæ•´è¡Œæ•°æ®
                 ProcessBluetoothResponse();
-                rx_index = 0; // Çå¿Õ»º³åÇø
+                rx_index = 0; // æ¸…ç©ºç¼“å†²åŒº
             }
         }
         else
         {
-            // »º³åÇøÂú£¬Çå¿Õ
+            // ç¼“å†²åŒºæ»¡ï¼Œæ¸…ç©º
             rx_index = 0;
         }
         
-        // Çå³ıÖĞ¶Ï±êÖ¾
+        // æ¸…é™¤ä¸­æ–­æ ‡å¿—
         UART_ClearFlag(UART0, UART_IT_RXNEI);
     }
 }
 
-// ===== ÆäËûÖĞ¶Ï·şÎñº¯ÊıÔ¤Áô =====
+// ===== å…¶ä»–ä¸­æ–­æœåŠ¡å‡½æ•°é¢„ç•™ =====
 void UART1_IRQHandler(void)
 {
-    // UART1µ±Ç°Ö»ÓÃÓÚµ÷ÊÔÊä³ö£¬ÎŞĞè½ÓÊÕÖĞ¶Ï
+    // UART1å½“å‰åªç”¨äºè°ƒè¯•è¾“å‡ºï¼Œæ— éœ€æ¥æ”¶ä¸­æ–­
     if (UART_GetITStatus(UART1, UART_IT_RXNEI) != RESET)
     {
-        // ¶ÁÈ¡²¢¶ªÆúÊı¾İ
+        // è¯»å–å¹¶ä¸¢å¼ƒæ•°æ®
         UART_ReceiveData(UART1);
         UART_ClearFlag(UART1, UART_IT_RXNEI);
     }
@@ -72,21 +72,22 @@ void UART1_IRQHandler(void)
 
 void I2C0_IRQHandler(void)
 {
-    // Ô¤Áô£ºMPU6050ÖĞ¶Ï´¦Àí
+    // é¢„ç•™ï¼šMPU6050ä¸­æ–­å¤„ç†
 }
 
-// ÆäËûÍâÉèÖĞ¶Ïº¯Êı¿É¸ù¾İĞèÒªÌí¼Ó
+// å…¶ä»–å¤–è®¾ä¸­æ–­å‡½æ•°å¯æ ¹æ®éœ€è¦æ·»åŠ 
 
-extern volatile uint32_t s_ms_ticks;   // 1ms ¼ÆÊı£¨È«¾Ö£©
-extern volatile uint32_t s_ms_delay;   // ×èÈûÊ½ ms ÑÓÊ±ÓÃ
-// SysTick ÖĞ¶Ï£º1ms ĞÄÌø + ×èÈûÑÓÊ±µİ¼õ
+extern volatile uint32_t s_ms_ticks;   // 1ms è®¡æ•°ï¼ˆå…¨å±€ï¼‰
+extern volatile uint32_t s_ms_delay;   // é˜»å¡å¼ ms å»¶æ—¶ç”¨
+// SysTick ä¸­æ–­ï¼š1ms å¿ƒè·³ + é˜»å¡å»¶æ—¶é€’å‡
 /**
-* @brief SysTickÖĞ¶Ï·şÎñº¯Êı
+* @brief SysTickä¸­æ–­æœåŠ¡å‡½æ•°
 * @param None
 * @retval None
 */
 void SysTick_Handler(void)
 {
   s_ms_ticks++;
-  if (s_ms_delay) s_ms_delay--;
+  if (s_ms_delay!= 0x00) 
+    s_ms_delay--;
 }

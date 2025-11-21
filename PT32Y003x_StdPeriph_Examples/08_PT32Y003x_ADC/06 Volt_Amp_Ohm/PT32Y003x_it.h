@@ -1,6 +1,6 @@
  /******************************************************************************
   * @file    PT32Y003x_it.h
-  * @author  Ó¦ÓÃ¿ª·¢ÍÅ¶Ó
+  * @author  åº”ç”¨å¼€å‘å›¢é˜Ÿ
   * @version V1.0.0
   * @date    2022/9/1
   * @brief    This file contains all the functions prototypes for the IT firmware library.

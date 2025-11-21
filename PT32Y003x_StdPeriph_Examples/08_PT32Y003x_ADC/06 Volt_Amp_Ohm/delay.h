@@ -6,10 +6,10 @@
 #include "core_cm0.h"
 #include <PT32Y003x_rcc.h>
 
-// ===== SysTick ÑÓÊ± =====
-extern volatile uint32_t s_ms_ticks;   // 1ms ¼ÆÊı£¨È«¾Ö£©
-extern volatile uint32_t s_ms_delay;   // ×èÈûÊ½ ms ÑÓÊ±ÓÃ
-// »ùÓÚ SysTick ¶¨Ê±Æ÷
+// ===== SysTick å»¶æ—¶ =====
+extern volatile uint32_t s_ms_ticks;   // 1ms è®¡æ•°ï¼ˆå…¨å±€ï¼‰
+extern volatile uint32_t s_ms_delay;   // é˜»å¡å¼ ms å»¶æ—¶ç”¨
+// åŸºäº SysTick å®šæ—¶å™¨
 void SysTick_Init_1kHz(void);
 void delay_us(uint32_t us);
 void delay_ms(uint32_t ms);

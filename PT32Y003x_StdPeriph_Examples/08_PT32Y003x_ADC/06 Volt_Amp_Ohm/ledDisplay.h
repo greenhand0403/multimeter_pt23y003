@@ -4,8 +4,8 @@
 #include <stdint.h>
 #include "PT32Y003x.h"
 
-// ÏÔÊ¾»º³åÇø£º×î¶à5Î»£¬Ç°4Î»ÎªÊı×Ö£¬µÚ5Î»Îªµ¥Î»/·ûºÅ
-extern volatile uint8_t display_buffer[5];  // Ã¿Î»µÄ¶ÎÂë
+// æ˜¾ç¤ºç¼“å†²åŒºï¼šæœ€å¤š5ä½ï¼Œå‰4ä½ä¸ºæ•°å­—ï¼Œç¬¬5ä½ä¸ºå•ä½/ç¬¦å·
+extern volatile uint8_t display_buffer[5];  // æ¯ä½çš„æ®µç 
 
 void LEDDisplay_Init(void);
 void LEDDisplay_UpdateColumn(void);

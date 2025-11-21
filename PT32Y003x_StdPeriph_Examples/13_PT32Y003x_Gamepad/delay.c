@@ -1,37 +1,36 @@
 #include "delay.h"
-volatile uint32_t s_ms_ticks = 0;   // ¶¨ÒåÒ»´Î
-volatile uint32_t s_ms_delay = 0;   // ¶¨ÒåÒ»´Î
+volatile uint32_t s_ms_ticks = 0;   // å®šä¹‰ä¸€æ¬¡
+volatile uint32_t s_ms_delay = 0;   // å®šä¹‰ä¸€æ¬¡
 
-// ÅäÖÃÎª 1kHz£¨1ms£©ÖÐ¶Ï
-void SysTick_Init_1kHz(void)
+// é…ç½®ä¸º 1kHzï¼ˆ1msï¼‰ä¸­æ–­
+void SysTick_Init(void)
 {
     s_ms_ticks = 0;
-    // Ç°ÃæÒÑ¾­ÉèÖÃÁËÏµÍ³Ê±ÖÓ48M·ÖÆµ8ËùÒÔHCLK±ä³É6M
-    uint32_t hclk = RCC_GetClockFreq(RCC_HCLK);        // ²Î¿¼ Systick_LED µÄÐ´·¨
-    // 1kHz: Ã¿ 1ms ½øÒ»´Î SysTick_Handler
-    if (SysTick_Config(hclk / 1000U)) { while (1) {} } // ³ö´íÖ±½Ó¿¨ËÀ£¬±ãÓÚ·¢ÏÖÎÊÌâ
+    // å‰é¢å·²ç»è®¾ç½®äº†ç³»ç»Ÿæ—¶é’Ÿ48Måˆ†é¢‘8æ‰€ä»¥HCLKå˜æˆ6M
+    uint32_t hclk = RCC_GetClockFreq(RCC_HCLK);        // å‚è€ƒ Systick_LED çš„å†™æ³•
+    if (SysTick_Config(hclk / 1000U)) { while (1) {} } // å‡ºé”™ç›´æŽ¥å¡æ­»ï¼Œä¾¿äºŽå‘çŽ°é—®é¢˜
 }
 
-// ×èÈûÊ½ºÁÃëÑÓÊ±£¨²»Ó°Ïì us ¶¨Ê±£©
+// é˜»å¡žå¼æ¯«ç§’å»¶æ—¶ï¼ˆä¸å½±å“ us å®šæ—¶ï¼‰
 void delay_ms(uint32_t ms)
 {
     s_ms_delay = ms;
-    // È·±£¼ÆÊýÆ÷ÒÑÔËÐÐ£¨±ÜÃâµÍ¹¦ºÄÍË³öºó×´Ì¬Òì³££©
+    // ç¡®ä¿è®¡æ•°å™¨å·²è¿è¡Œï¼ˆé¿å…ä½ŽåŠŸè€—é€€å‡ºåŽçŠ¶æ€å¼‚å¸¸ï¼‰
     SysTick->CTRL |= SysTick_CTRL_ENABLE_Msk;
-    while (s_ms_delay) { /* µÈ´ý */ }
+    while (s_ms_delay!=0) { /* ç­‰å¾… */ }
 }
 
-// Î¢Ãë¼¶ÑÓÊ±£ºÀûÓÃµ±Ç° 1kHz SysTick µÄ VAL ²î·Ö¼ÆÊý
-// Ô­Àí£ºSysTick ÒÔ hclk ÆµÂÊµÝ¼õ£»ÎÒÃÇ¶ÁÈ¡Æðµã VAL£¬ÂÖÑ¯ÒÑÏûºÄµÄÊ±ÖÓÖÜÆÚÊý£¬´ïµ½ us ¶ÔÓ¦µÄÖÜÆÚÊýÍË³ö
+// å¾®ç§’çº§å»¶æ—¶ï¼šåˆ©ç”¨å½“å‰ 1kHz SysTick çš„ VAL å·®åˆ†è®¡æ•°
+// åŽŸç†ï¼šSysTick ä»¥ hclk é¢‘çŽ‡é€’å‡ï¼›æˆ‘ä»¬è¯»å–èµ·ç‚¹ VALï¼Œè½®è¯¢å·²æ¶ˆè€—çš„æ—¶é’Ÿå‘¨æœŸæ•°ï¼Œè¾¾åˆ° us å¯¹åº”çš„å‘¨æœŸæ•°é€€å‡º
 void delay_us(uint32_t us)
 {
     uint32_t hclk = RCC_GetClockFreq(RCC_HCLK);
-    uint32_t cycles = (hclk / 1000000U) * us;   // ÐèÒªµÄ HCLK ÖÜÆÚÊý
-    uint32_t start = SysTick->VAL;              // Æðµã
-    uint32_t load  = SysTick->LOAD + 1U;        // ¼ÆÊýÆ÷Ä£Öµ£¨+1 ÒòÎª´Ó LOAD µ½ 0 ¹² load+1 ¸öÖÜÆÚ£©
+    uint32_t cycles = (hclk / 1000000U) * us;   // éœ€è¦çš„ HCLK å‘¨æœŸæ•°
+    uint32_t start = SysTick->VAL;              // èµ·ç‚¹
+    uint32_t load  = SysTick->LOAD + 1U;        // è®¡æ•°å™¨æ¨¡å€¼ï¼ˆ+1 å› ä¸ºä»Ž LOAD åˆ° 0 å…± load+1 ä¸ªå‘¨æœŸï¼‰
     uint32_t elapsed = 0;
 
-    // ×¢Òâ£ºSysTick µÝ¼õ²¢ÔÚ 0 Ê±ÖØ×°ÔØ£¬Òò´ËÓÃÈ¡Ä£²î·Ö¼ÆËãÒÑ¹ýÖÜÆÚ
+    // æ³¨æ„ï¼šSysTick é€’å‡å¹¶åœ¨ 0 æ—¶é‡è£…è½½ï¼Œå› æ­¤ç”¨å–æ¨¡å·®åˆ†è®¡ç®—å·²è¿‡å‘¨æœŸ
     while (elapsed < cycles)
     {
         uint32_t now = SysTick->VAL;

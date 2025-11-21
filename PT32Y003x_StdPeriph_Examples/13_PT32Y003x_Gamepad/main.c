@@ -9,8 +9,8 @@
 #include <stdarg.h>
 #include "delay.h"
 
-#pragma region ºêºÍÈ«¾Ö±äÁ¿
-// ===== °´¼ü¶¨Òå =====
+#pragma region å®å’Œå…¨å±€å˜é‡
+// ===== æŒ‰é”®å®šä¹‰ =====
 #define KEY_UP      GPIO_ReadDataBit(GPIOA, GPIO_Pin_1)   // PA1
 #define KEY_LEFT    GPIO_ReadDataBit(GPIOA, GPIO_Pin_2)   // PA2
 #define KEY_DOWN    GPIO_ReadDataBit(GPIOC, GPIO_Pin_3)   // PC3
@@ -18,34 +18,34 @@
 #define KEY_A       GPIO_ReadDataBit(GPIOC, GPIO_Pin_5)   // PC5
 #define KEY_B       GPIO_ReadDataBit(GPIOC, GPIO_Pin_6)   // PC6
 
-// °´¼üÓĞĞ§µçÆ½£ºµÍµçÆ½ÓĞĞ§£¨0 = pressed£©
+// æŒ‰é”®æœ‰æ•ˆç”µå¹³ï¼šä½ç”µå¹³æœ‰æ•ˆï¼ˆ0 = pressedï¼‰
 #define KEY_PRESSED 0
 
-// ===== À¶ÑÀÄ£¿éÅäÖÃ =====
+// ===== è“ç‰™æ¨¡å—é…ç½® =====
 #define BLUETOOTH_BAUD 115200
-// ===== µ÷ÊÔ´®¿ÚÅäÖÃ =====
+// ===== è°ƒè¯•ä¸²å£é…ç½® =====
 #define DEBUG_BAUD 115200
 
-// ===== À¶ÑÀÏûÏ¢°ü¸ñÊ½£ºÒ»¹²ËÄ×Ö½Ú£¬ÖĞ¼äÊÇÊı¾İºÍĞ£ÑéºÍ =====
+// ===== è“ç‰™æ¶ˆæ¯åŒ…æ ¼å¼ï¼šä¸€å…±å››å­—èŠ‚ï¼Œä¸­é—´æ˜¯æ•°æ®å’Œæ ¡éªŒå’Œ =====
 #define PACKET_HEADER   0xAA
 #define PACKET_TAIL     0x55
 
-// ===== È«¾Ö±äÁ¿ =====
+// ===== å…¨å±€å˜é‡ =====
 u8 last_key_state = 0;
 u8 current_key_state = 0;
 
-// ===== À¶ÑÀÄ£¿é×´Ì¬ =====
-// ¸øÖĞ¶Ï·şÎñº¯ÊıÓÃ£¬±êÖ¾À¶ÑÀÄ£¿éÊÇ·ñ³õÊ¼»¯Íê³É
+// ===== è“ç‰™æ¨¡å—çŠ¶æ€ =====
+// ç»™ä¸­æ–­æœåŠ¡å‡½æ•°ç”¨ï¼Œæ ‡å¿—è“ç‰™æ¨¡å—æ˜¯å¦åˆå§‹åŒ–å®Œæˆ
 u8 bluetooth_ready = 0;
 
-// ===== UART½ÓÊÕ»º³åÇø =====
-// ¸øÖĞ¶Ï·şÎñº¯ÊıÓÃ£¬ÓÃÓÚ´æ´¢´ÓÀ¶ÑÀÄ£¿é½ÓÊÕµÄÊı¾İ
+// ===== UARTæ¥æ”¶ç¼“å†²åŒº =====
+// ç»™ä¸­æ–­æœåŠ¡å‡½æ•°ç”¨ï¼Œç”¨äºå­˜å‚¨ä»è“ç‰™æ¨¡å—æ¥æ”¶çš„æ•°æ®
 u8 rx_buffer[64];
 u16 rx_index = 0;
 #pragma endregion
 
-#pragma region º¯ÊıÉùÃ÷
-// ===== º¯ÊıÉùÃ÷ =====
+#pragma region å‡½æ•°å£°æ˜
+// ===== å‡½æ•°å£°æ˜ =====
 
 void GPIO_Config(void);
 void UART0_Config(void);
@@ -60,8 +60,8 @@ void SendDebugInfo(void);
 u8 CalculateChecksum(u8* data, u8 len);
 #pragma endregion
 
-#pragma region ´®¿Ú¸ñÊ½»¯Êä³ö¸¨Öúº¯Êı
-// ÏòÖ¸¶¨UART·¢ËÍ×Ö·û´®
+#pragma region ä¸²å£æ ¼å¼åŒ–è¾“å‡ºè¾…åŠ©å‡½æ•°
+// å‘æŒ‡å®šUARTå‘é€å­—ç¬¦ä¸²
 void UART_SendString(UART_TypeDef* UARTx, const char *str)
 {
     while (*str) {
@@ -70,7 +70,7 @@ void UART_SendString(UART_TypeDef* UARTx, const char *str)
         str++;
     }
 }
-// ºËĞÄµÄ¸ñÊ½»¯Êä³öº¯Êı£¨Ö§³Ö»ù±¾¸ñÊ½£©
+// æ ¸å¿ƒçš„æ ¼å¼åŒ–è¾“å‡ºå‡½æ•°ï¼ˆæ”¯æŒåŸºæœ¬æ ¼å¼ï¼‰
 void UART_Printf(const char *format, ...)
 {
     char buffer[128];
@@ -84,7 +84,7 @@ void UART_Printf(const char *format, ...)
     UART_SendString(UART1, buffer);
 }
 
-// ×¨ÃÅÊä³öµ½UART0£¨À¶ÑÀ£©
+// ä¸“é—¨è¾“å‡ºåˆ°UART0ï¼ˆè“ç‰™ï¼‰
 void Bluetooth_Printf(const char *format, ...)
 {
     char buffer[128];
@@ -97,7 +97,7 @@ void Bluetooth_Printf(const char *format, ...)
     UART_SendString(UART0, buffer);
 }
 
-// ×¨ÃÅÊä³öµ½UART1£¨µ÷ÊÔ£©
+// ä¸“é—¨è¾“å‡ºåˆ°UART1ï¼ˆè°ƒè¯•ï¼‰
 void Debug_Printf(const char *format, ...)
 {
     char buffer[128];
@@ -111,32 +111,32 @@ void Debug_Printf(const char *format, ...)
 }
 #pragma endregion
 
-#pragma region Ö÷º¯Êı
-// ===== Ö÷º¯Êı =====
+#pragma region ä¸»å‡½æ•°
+// ===== ä¸»å‡½æ•° =====
 int main(void)
 {
-    SysTick_Init_1kHz();
+    SysTick_Init();
     
-    // ³õÊ¼»¯ËùÓĞÍâÉè
+    // åˆå§‹åŒ–æ‰€æœ‰å¤–è®¾
     GPIO_Config();
     UART0_Config();
     UART1_Config();
-    // Ô¤Áô ÍÓÂİÒÇ³õÊ¼»¯
+    // é¢„ç•™ é™€èºä»ªåˆå§‹åŒ–
     // I2C0_Config();
-    // Ô¤Áô ¶æ»ú³õÊ¼»¯
+    // é¢„ç•™ èˆµæœºåˆå§‹åŒ–
     // Servo_Config();
     // Timer_Config();
     
-    UART_Printf("Gamepad Starting...\r\n");
+    UART_Printf("UART0 UART1 OK\r\n");
     
-    // ³õÊ¼»¯À¶ÑÀÄ£¿é
+    // åˆå§‹åŒ–è“ç‰™æ¨¡å—
     Bluetooth_Init();
     
-    UART_Printf("Bluetooth initialized.\r\n");
+    UART_Printf("BT Init OK\r\n");
     
     while (1)
     {
-        // ¶ÁÈ¡µ±Ç°°´¼ü×´Ì¬
+        // è¯»å–å½“å‰æŒ‰é”®çŠ¶æ€
         current_key_state = 0;
         if (KEY_UP == KEY_PRESSED)      current_key_state |= 0x01;
         if (KEY_LEFT == KEY_PRESSED)    current_key_state |= 0x02;
@@ -145,7 +145,7 @@ int main(void)
         if (KEY_A == KEY_PRESSED)       current_key_state |= 0x10;
         if (KEY_B == KEY_PRESSED)       current_key_state |= 0x20;
         
-        // ¼ì²â°´¼ü×´Ì¬±ä»¯
+        // æ£€æµ‹æŒ‰é”®çŠ¶æ€å˜åŒ–
         if (current_key_state != last_key_state)
         {
             SendKeyStatePacket();
@@ -153,16 +153,16 @@ int main(void)
             last_key_state = current_key_state;
         }
         
-        delay_ms(100); // ·À¶¶ÑÓÊ±
+        delay_ms(100); // é˜²æŠ–å»¶æ—¶
     }
 }
 
-// ===== GPIO³õÊ¼»¯ =====
+// ===== GPIOåˆå§‹åŒ– =====
 void GPIO_Config(void)
 {
     GPIO_InitTypeDef gpio;
     
-    // ÅäÖÃ°´¼üÊäÈë£¨PA1, PA2, PC3, PC4, PC5, PC6£©- ÉÏÀ­ÊäÈë
+    // é…ç½®æŒ‰é”®è¾“å…¥ï¼ˆPA1, PA2, PC3, PC4, PC5, PC6ï¼‰- ä¸Šæ‹‰è¾“å…¥
     gpio.GPIO_Pin = GPIO_Pin_1 | GPIO_Pin_2;
     gpio.GPIO_Mode = GPIO_Mode_In;
     gpio.GPIO_Pull = GPIO_Pull_Up;
@@ -173,41 +173,41 @@ void GPIO_Config(void)
     gpio.GPIO_Pull = GPIO_Pull_Up;
     GPIO_Init(GPIOC, &gpio);
     
-    /* ÅäÖÃ PD5 (TX0) Îª AF ÍÆÍìÊä³ö£¬PD6 (RX0) ÎªÊäÈë¸¡¿Õ»òÉÏÀ­ */
+    /* é…ç½® PD5 (TX0) ä¸º AF æ¨æŒ½è¾“å‡ºï¼ŒPD6 (RX0) ä¸ºè¾“å…¥æµ®ç©ºæˆ–ä¸Šæ‹‰ */
     GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_5, AFIO_AF_0,ENABLE);	//PD5 TX0
     GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_6, AFIO_AF_0,ENABLE);	//PD6 RX0
 
     /* UART1 remap -> PB1 TX1 */
     GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_1, AFIO_AF_1,ENABLE);	//PB1 TX1
     
-    // ÅäÖÃI2C0Òı½Å£¨PB4=SCL, PB5=SDA£©
+    // é…ç½®I2C0å¼•è„šï¼ˆPB4=SCL, PB5=SDAï¼‰
     GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_4, AFIO_AF_0, ENABLE); // PB4 = SCL
     GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_5, AFIO_AF_0, ENABLE); // PB5 = SDA
     
-    // ÅäÖÃ¶æ»úÒı½Å£¨PA3£©
+    // é…ç½®èˆµæœºå¼•è„šï¼ˆPA3ï¼‰
     gpio.GPIO_Pin = GPIO_Pin_3;
     gpio.GPIO_Mode = GPIO_Mode_OutPP;
     // gpio.GPIO_Pull = GPIO_Pull_NoPull;
     GPIO_Init(GPIOA, &gpio);
-    GPIO_ResetBits(GPIOA, GPIO_Pin_3); // Ä¬ÈÏµÍµçÆ½
+    GPIO_ResetBits(GPIOA, GPIO_Pin_3); // é»˜è®¤ä½ç”µå¹³
 }
 
-// ===== UART0ÅäÖÃ£¨À¶ÑÀÍ¨ĞÅ£©=====
+// ===== UART0é…ç½®ï¼ˆè“ç‰™é€šä¿¡ï¼‰=====
 void UART0_Config(void)
 {
     UART_InitTypeDef uart;
     NVIC_InitTypeDef nvic;
     
-    // NVICÅäÖÃ
+    // NVICé…ç½®
     nvic.NVIC_IRQChannel = UART0_IRQn;
     nvic.NVIC_IRQChannelCmd = ENABLE;
     nvic.NVIC_IRQChannelPriority = 0x01;
     NVIC_Init(&nvic);
 
-    // Ê¹ÄÜ½ÓÊÕÖĞ¶Ï
+    // ä½¿èƒ½æ¥æ”¶ä¸­æ–­
     UART_ITConfig(UART0, UART_IT_RXNEI, ENABLE);
     
-    // UART0ÅäÖÃ
+    // UART0é…ç½®
     uart.UART_BaudRate = BLUETOOTH_BAUD;
     uart.UART_WordLengthAndParity = UART_WordLengthAndParity_8D;
     uart.UART_StopBitLength = UART_StopBitLength_1;
@@ -219,7 +219,7 @@ void UART0_Config(void)
 	UART_Init(UART0, &uart);
 }
 
-// ===== UART1ÅäÖÃ£¨µ÷ÊÔÊä³ö£©=====
+// ===== UART1é…ç½®ï¼ˆè°ƒè¯•è¾“å‡ºï¼‰=====
 void UART1_Config(void)
 {
     UART_InitTypeDef uart;
@@ -228,14 +228,14 @@ void UART1_Config(void)
     uart.UART_WordLengthAndParity = UART_WordLengthAndParity_8D;
     uart.UART_StopBitLength = UART_StopBitLength_1;
     uart.UART_ParityMode = UART_ParityMode_Odd;
-    uart.UART_Receiver = UART_Receiver_Enable;
+    // uart.UART_Receiver = UART_Receiver_Enable;
     uart.UART_LoopbackMode = UART_LoopbackMode_Disable;
 
     UART_Cmd(UART1, ENABLE);
     UART_Init(UART1, &uart);
 }
 
-// ===== I2C0ÅäÖÃ£¨Ô¤ÁôMPU6050£©=====
+// ===== I2C0é…ç½®ï¼ˆé¢„ç•™MPU6050ï¼‰=====
 void I2C0_Config(void)
 {
     I2C_InitTypeDef i2c;
@@ -243,17 +243,17 @@ void I2C0_Config(void)
     i2c.I2C_Acknowledge = I2C_Acknowledge_Enable;
     i2c.I2C_Broadcast = I2C_Broadcast_Disable;
     i2c.I2C_OwnAddress = 0x00;
-    i2c.I2C_Prescaler = 479; // ¼ÙÉèPCLK=48MHz, SCL¡Ö100kHz
+    i2c.I2C_Prescaler = 479; // å‡è®¾PCLK=48MHz, SCLâ‰ˆ100kHz
     I2C_Init(I2C0, &i2c);
     I2C_Cmd(I2C0, ENABLE);
 }
 
-// ===== ¶æ»úÅäÖÃ£¨PA3£©=====
+// ===== èˆµæœºé…ç½®ï¼ˆPA3ï¼‰=====
 void Servo_Config(void)
 {
-    // Ô¤Áô£ºÅäÖÃPA3ÎªPWMÊä³ö¿ØÖÆSG90
-    // ĞèÒªÊ¹ÓÃ¶¨Ê±Æ÷Êä³ö50Hz PWMĞÅºÅ
-    // ÕâÀïÏÈÅäÖÃÎªÆÕÍ¨GPIO
+    // é¢„ç•™ï¼šé…ç½®PA3ä¸ºPWMè¾“å‡ºæ§åˆ¶SG90
+    // éœ€è¦ä½¿ç”¨å®šæ—¶å™¨è¾“å‡º50Hz PWMä¿¡å·
+    // è¿™é‡Œå…ˆé…ç½®ä¸ºæ™®é€šGPIO
     GPIO_InitTypeDef gpio;
     gpio.GPIO_Pin = GPIO_Pin_3;
     gpio.GPIO_Mode = GPIO_Mode_OutPP;
@@ -261,46 +261,48 @@ void Servo_Config(void)
     GPIO_SetBits(GPIOA, GPIO_Pin_3);
 }
 
-// ===== ¶¨Ê±Æ÷ÅäÖÃ£¨Ô¤ÁôPWM£©=====
+// ===== å®šæ—¶å™¨é…ç½®ï¼ˆé¢„ç•™PWMï¼‰=====
 void Timer_Config(void)
 {
-    // Ô¤Áô£ºÓÃÓÚ¶æ»úPWM»òÆäËû¶¨Ê±ÈÎÎñ
+    // é¢„ç•™ï¼šç”¨äºèˆµæœºPWMæˆ–å…¶ä»–å®šæ—¶ä»»åŠ¡
 
-    // ÕâÀï¿ÉÒÔÅäÖÃTIMER1»òTIMER2
+    // è¿™é‡Œå¯ä»¥é…ç½®TIMER1æˆ–TIMER2
 }
 
-// ===== À¶ÑÀÄ£¿é³õÊ¼»¯ =====
+// ===== è“ç‰™æ¨¡å—åˆå§‹åŒ– =====
 void Bluetooth_Init(void)
 {
-    UART_Printf("Bluetooth\r\n");
-    Bluetooth_Printf("AT+QT\r\n"); // ²éÑ¯²¨ÌØÂÊ
-    Debug_Printf("Init\r\n");
-    delay_ms(500);
-    UART_Printf("OK\r\n");
+    // åªå‘ç»™è“ç‰™ï¼ŒæŸ¥è¯¢æ³¢ç‰¹ç‡
+    Bluetooth_Printf("AT+QT\r\n"); // æŸ¥è¯¢æ³¢ç‰¹ç‡
+    // åªå‘ç»™ UART1 è°ƒè¯•
+    Debug_Printf("DEBUG UART1\r\n");
+    // å»¶é•¿1ç§’æµ‹è¯•
+    delay_ms(1000);
+    UART_Printf("All OK\r\n");
 }
 
-// ===== ·¢ËÍ°´¼ü×´Ì¬Êı¾İ°ü£¨±ê×¼4×Ö½Ú¸ñÊ½£©=====
+// ===== å‘é€æŒ‰é”®çŠ¶æ€æ•°æ®åŒ…ï¼ˆæ ‡å‡†4å­—èŠ‚æ ¼å¼ï¼‰=====
 void SendKeyStatePacket(void)
 {
-    u8 packet[4]; // Í·²¿ + Êı¾İ + Ğ£Ñé + Î²²¿
+    u8 packet[4]; // å¤´éƒ¨ + æ•°æ® + æ ¡éªŒ + å°¾éƒ¨
     
-    packet[0] = PACKET_HEADER;      // °üÍ·
-    packet[1] = current_key_state;  // °´¼ü×´Ì¬£¨µÍ6Î»£©
-    packet[2] = CalculateChecksum(&packet[0], 2); // Ğ£ÑéºÍ
-    packet[3] = PACKET_TAIL;        // °üÎ²
+    packet[0] = PACKET_HEADER;      // åŒ…å¤´
+    packet[1] = current_key_state;  // æŒ‰é”®çŠ¶æ€ï¼ˆä½6ä½ï¼‰
+    packet[2] = CalculateChecksum(&packet[0], 2); // æ ¡éªŒå’Œ
+    packet[3] = PACKET_TAIL;        // åŒ…å°¾
     
-    // ·¢ËÍÕû¸öÊı¾İ°ü
+    // å‘é€æ•´ä¸ªæ•°æ®åŒ…
     for (int i = 0; i < 4; i++)
     {
         UART_SendData(UART0, packet[i]);
-        while (UART_GetFlagStatus(UART0, UART_FLAG_TXE) == RESET); // µÈ´ı·¢ËÍÍê³É
+        while (UART_GetFlagStatus(UART0, UART_FLAG_TXE) == RESET); // ç­‰å¾…å‘é€å®Œæˆ
     }
     
     Debug_Printf("Sent key packet: %02X %02X %02X %02X\r\n", 
            packet[0], packet[1], packet[2], packet[3]);
 }
 
-// ===== ¼ÆËãĞ£ÑéºÍ =====
+// ===== è®¡ç®—æ ¡éªŒå’Œ =====
 u8 CalculateChecksum(u8* data, u8 len)
 {
     u8 sum = 0;
@@ -311,7 +313,7 @@ u8 CalculateChecksum(u8* data, u8 len)
     return sum;
 }
 
-// ===== Ö»·¢ËÍµ÷ÊÔĞÅÏ¢µ½UART1 =====
+// ===== åªå‘é€è°ƒè¯•ä¿¡æ¯åˆ°UART1 =====
 void SendDebugInfo(void)
 {
     Debug_Printf("Key State: 0x%02X -> ", current_key_state);

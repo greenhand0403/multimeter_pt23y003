@@ -13,10 +13,10 @@
 #include <PT32Y003x_exti.h>
 #include <string.h>
 
-#pragma region ºê¶¨Òå¡¢È«¾Ö±äÁ¿ºÍ¹¤¾ßº¯ÊıÅäÖÃ
+#pragma region å®å®šä¹‰ã€å…¨å±€å˜é‡å’Œå·¥å…·å‡½æ•°é…ç½®
 #define ENABLE_LOG 0
 #if ENABLE_LOG
-char log_buffer[64];  // ÓÃÓÚ´òÓ¡ÈÕÖ¾ ×ã¹»´æ´¢¸ñÊ½»¯×Ö·û´®
+char log_buffer[64];  // ç”¨äºæ‰“å°æ—¥å¿— è¶³å¤Ÿå­˜å‚¨æ ¼å¼åŒ–å­—ç¬¦ä¸²
   #define LOG_UART UART0
   #define LOGF(...) do{ sprintf(log_buffer, __VA_ARGS__); UART1_SendString(log_buffer); }while(0)
   #define LOGS(s)   do{ UART1_SendString(s); }while(0)
@@ -25,170 +25,170 @@ char log_buffer[64];  // ÓÃÓÚ´òÓ¡ÈÕÖ¾ ×ã¹»´æ´¢¸ñÊ½»¯×Ö·û´®
   #define LOGS(s)   do{}while(0)
 #endif
 
-// ¶Áµ½µÄADCÔ­Ê¼Êı¾İ ±¾À´ÊÇÈ«¾ÖµÄ£¬¸øÅĞ¶Ï±ä»¯ÂÊ10%Ê¹ÓÃµÄ
-static uint16_t g_adc_pa1_raw = 0;  // ĞòºÅ0£¨PA1£©
-static uint16_t g_adc_pc4_raw = 0;  // ĞòºÅ1£¨PC4£©
-// ¹Ø»úÇëÇó
+// è¯»åˆ°çš„ADCåŸå§‹æ•°æ® æœ¬æ¥æ˜¯å…¨å±€çš„ï¼Œç»™åˆ¤æ–­å˜åŒ–ç‡10%ä½¿ç”¨çš„
+static uint16_t g_adc_pa1_raw = 0;  // åºå·0ï¼ˆPA1ï¼‰
+static uint16_t g_adc_pc4_raw = 0;  // åºå·1ï¼ˆPC4ï¼‰
+// å…³æœºè¯·æ±‚
 volatile uint8_t poweroff_request = 0;
-volatile uint8_t g_require_release_before_poweroff = 0; // 0=Î´ÒªÇó, 1=ÒªÇóÏÈËÉÊÖ
-extern uint8_t s_lock_until_release; // ËÉÊÖËø
-// Idle ¼à¿Ø£¨120s×Ô¶¯ĞİÃß¹¦ÄÜ£©
+volatile uint8_t g_require_release_before_poweroff = 0; // 0=æœªè¦æ±‚, 1=è¦æ±‚å…ˆæ¾æ‰‹
+extern uint8_t s_lock_until_release; // æ¾æ‰‹é”
+// Idle ç›‘æ§ï¼ˆ120sè‡ªåŠ¨ä¼‘çœ åŠŸèƒ½ï¼‰
 typedef struct {
     float     last_v;
     uint8_t   have_last;
-    uint8_t   quiet;          // 1=µ±Ç°´¦ÓÚ¡°±ä»¯ÂÊ<ãĞÖµ¡±µÄ°²¾²Çø
-    uint32_t  quiet_since_ms; // ½øÈë°²¾²ÇøµÄÊ±¼ä´Á
+    uint8_t   quiet;          // 1=å½“å‰å¤„äºâ€œå˜åŒ–ç‡<é˜ˆå€¼â€çš„å®‰é™åŒº
+    uint32_t  quiet_since_ms; // è¿›å…¥å®‰é™åŒºçš„æ—¶é—´æˆ³
 } idle_tracker_t;
 volatile idle_tracker_t g_idle = {0};
 #define IDLE_WINDOW_MS        (120000U)  // 2min
-#define CHANGE_THRESHOLD_ON   (0.10f)     // ½øÈë°²¾²ÅĞ¶¨ãĞÖµ£¨10%£©
-#define CHANGE_THRESHOLD_OFF  (0.11f)     // ÍË³ö°²¾²µÄ»Ø²îãĞÖµ£¨11%£ºÇáÎ¢³ÙÖÍ£¬¿¹¶¶£©
-// ³¤°´°´¼ü³õÊ¼»¯ºÍ°´¼ü»½ĞÑ
-// ¿Éµ÷²ÎÊı
+#define CHANGE_THRESHOLD_ON   (0.10f)     // è¿›å…¥å®‰é™åˆ¤å®šé˜ˆå€¼ï¼ˆ10%ï¼‰
+#define CHANGE_THRESHOLD_OFF  (0.11f)     // é€€å‡ºå®‰é™çš„å›å·®é˜ˆå€¼ï¼ˆ11%ï¼šè½»å¾®è¿Ÿæ»ï¼ŒæŠ—æŠ–ï¼‰
+// é•¿æŒ‰æŒ‰é”®åˆå§‹åŒ–å’ŒæŒ‰é”®å”¤é†’
+// å¯è°ƒå‚æ•°
 const uint32_t PWR_DEBOUNCE_MS = 90U;
 const uint32_t PWR_LONGPRESS_MS = 900U;
 const uint32_t POSTWAKE_LONGPRESS_TIMEOUT = 5000U;
-// PC5 °´¼ü¶¨Ê±Æ÷ TIM2 Ã¿ 10ms É¨ÃèÓÃµ½µÄ¼ÆÊı
+// PC5 æŒ‰é”®å®šæ—¶å™¨ TIM2 æ¯ 10ms æ‰«æç”¨åˆ°çš„è®¡æ•°
 volatile uint16_t s_pwr_stable_ticks = 0;
 volatile uint16_t s_pwr_press_ticks  = 0;
-volatile uint8_t  s_pwr_last_sample  = 1;   // 1=Î´°´, 0=°´ÏÂ
+volatile uint8_t  s_pwr_last_sample  = 1;   // 1=æœªæŒ‰, 0=æŒ‰ä¸‹
 
-// ÍòÓÃ±í³õÊ¼Ä£Ê½ÒÑÉèÖÃ
+// ä¸‡ç”¨è¡¨åˆå§‹æ¨¡å¼å·²è®¾ç½®
 static bool hadSetMultiMeterMode = false;
-// ÍòÓÃ±í¹¤×÷ĞèÒªµÄÍâÉèÒÑÅäÖÃ
+// ä¸‡ç”¨è¡¨å·¥ä½œéœ€è¦çš„å¤–è®¾å·²é…ç½®
 static bool hadSetMultimeterInit = false;
-// ÔËĞĞÄ£Ê½£º¹¤×÷Ì¬ »½ĞÑÌ¬ µÈ´ıÌ¬
+// è¿è¡Œæ¨¡å¼ï¼šå·¥ä½œæ€ å”¤é†’æ€ ç­‰å¾…æ€
 typedef enum { RUN_MODE_NORMALWORK = 0, RUN_MODE_DEEPSLEEP = 1, RUN_MODE_WAKEUP = 2} run_mode_t;
-volatile uint8_t g_run_mode = RUN_MODE_NORMALWORK;   // Ä¬ÈÏ´¦ÓÚĞİÃßÄ£Ê½
+volatile uint8_t g_run_mode = RUN_MODE_NORMALWORK;   // é»˜è®¤å¤„äºä¼‘çœ æ¨¡å¼
 
-// ÍòÓÃ±íÀàĞÍ£º µçÑ¹±í µçÁ÷±í Å·Ä·±í
+// ä¸‡ç”¨è¡¨ç±»å‹ï¼š ç”µå‹è¡¨ ç”µæµè¡¨ æ¬§å§†è¡¨
 typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } meter_mode_t;
 static meter_mode_t meter_mode = -1;
 
-// ¿ª»úÁãµã µçÁ÷±íÒ»ºÅ
+// å¼€æœºé›¶ç‚¹ ç”µæµè¡¨ä¸€å·
 // float V_REF = 0.994f;
-// ¿ª»úÁãµã µçÁ÷±í¶şºÅ
+// å¼€æœºé›¶ç‚¹ ç”µæµè¡¨äºŒå·
 // float V_REF = 0.991f;
-// ¿ª»úÁãµã µçÁ÷±íÈıºÅ
+// å¼€æœºé›¶ç‚¹ ç”µæµè¡¨ä¸‰å·
 float V_REF = 0.989f;
 static inline float V_DV(float v_raw) { return v_raw - V_REF; }
 
-#define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f) // ADC Ô­Ê¼Öµ×ªµçÑ¹
-#define AVG_N            5 // Æ½¾ù²ÉÑù´ÎÊı
-// µçÁ÷±í
-#define I_ZERO_OFFSET_A     0.f   // ÕıÏòÁãµãÆ¯ÒÆ
-#define I_FULLSCALE_A       3.0f    // ÂúÁ¿³Ì£¨|I| µÄÉÏÏŞ£©
+#define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f) // ADC åŸå§‹å€¼è½¬ç”µå‹
+#define AVG_N            5 // å¹³å‡é‡‡æ ·æ¬¡æ•°
+// ç”µæµè¡¨
+#define I_ZERO_OFFSET_A     0.f   // æ­£å‘é›¶ç‚¹æ¼‚ç§»
+#define I_FULLSCALE_A       3.0f    // æ»¡é‡ç¨‹ï¼ˆ|I| çš„ä¸Šé™ï¼‰
 
-// ÕıÏò£¨0~3A£©£º¶ÁÊıÆ«¸ß +5~+50mA ¿ª»ú ¼õÈ¥5mA
+// æ­£å‘ï¼ˆ0~3Aï¼‰ï¼šè¯»æ•°åé«˜ +5~+50mA å¼€æœº å‡å»5mA
 #define ERR_POS_AT0_A       -0.008f  // +5mA @ ~0A
 #define ERR_POS_ATFS_A      0.028f // +50mA @ +3A
 
-// ·´Ïò£¨-3~0A£©£º¶ÁÊıÆ«µÍ ?5~?50mA£¨µÈ¼ÛÓÚÊıÖµ¸ü¡°¸º¡±£©
-// ÓÃÕıÊı±íÊ¾¡°Îó²î·ù¶È¡±£¬·½ÏòÓÉ·ûºÅÍ³Ò»´¦Àí
+// åå‘ï¼ˆ-3~0Aï¼‰ï¼šè¯»æ•°åä½ ?5~?50mAï¼ˆç­‰ä»·äºæ•°å€¼æ›´â€œè´Ÿâ€ï¼‰
+// ç”¨æ­£æ•°è¡¨ç¤ºâ€œè¯¯å·®å¹…åº¦â€ï¼Œæ–¹å‘ç”±ç¬¦å·ç»Ÿä¸€å¤„ç†
 #define ERR_NEG_AT0_A       -0.008f  // 10mA @ ~0A
 #define ERR_NEG_ATFS_A      0.028f  // 50mA @ -3A
 
-// Ğ¡µçÁ÷ËÀÇø£¨¿¹¶¶£©£¬¿É°´ÔëÉùµ÷Õû
+// å°ç”µæµæ­»åŒºï¼ˆæŠ—æŠ–ï¼‰ï¼Œå¯æŒ‰å™ªå£°è°ƒæ•´
 // #define I_DEADBAND_A        0.0025f  // 2.5mA
 #define I_DEADBAND_A        0.008f  // 8mA
-// Ó²¼şÓë±ê¶¨ÊıÖµ
-#define RSHUNT           0.1f      // ²ÉÑùµç×è
-#define I_IDLE_A         0.006f    // <6mA ÊÓÎªÎŞ¸ºÔØ
-// A µµ£¨Ä¬ÈÏ£©
+// ç¡¬ä»¶ä¸æ ‡å®šæ•°å€¼
+#define RSHUNT           0.1f      // é‡‡æ ·ç”µé˜»
+#define I_IDLE_A         0.006f    // <6mA è§†ä¸ºæ— è´Ÿè½½
+// A æ¡£ï¼ˆé»˜è®¤ï¼‰
 #define GAIN_A           3.9f
-// mA µµ£¨´øÄãµÄĞ±ÂÊĞŞÕıÏµÊı£©´æÔÚÎó²î£¬´óÔ¼Ö»·Å´óÁË30±¶¶ø·Ç34±¶
+// mA æ¡£ï¼ˆå¸¦ä½ çš„æ–œç‡ä¿®æ­£ç³»æ•°ï¼‰å­˜åœ¨è¯¯å·®ï¼Œå¤§çº¦åªæ”¾å¤§äº†30å€è€Œé34å€
 #define GAIN_mA          33.99f
-#define MA_SLOPE_FIX     10.f   // ÄãÇ°Ãæ±ê¶¨µÃ³öµÄĞ±ÂÊÏµÊı
-// mA µµÉÏÏŞ£¨=28mA£©
+#define MA_SLOPE_FIX     10.f   // ä½ å‰é¢æ ‡å®šå¾—å‡ºçš„æ–œç‡ç³»æ•°
+// mA æ¡£ä¸Šé™ï¼ˆ=28mAï¼‰
 #define I_MA_MAX         0.28f
-#define ZERO_BAND_V       0.0040f                    // ÁãµãËÀÇø£º|¦¤V|<4mV ÊÓÎª0V
-// Å·Ä·±í
-// #define VIN_ZERO_TH         0.33f    // <´ËµçÑ¹ÊÓÎª¶ÌÂ·(10¦¸)
-#define VIN_ZERO_TH         0.96f    // <´ËµçÑ¹ÊÓÎª¶ÌÂ·(50¦¸)
+#define ZERO_BAND_V       0.0040f                    // é›¶ç‚¹æ­»åŒºï¼š|Î”V|<4mV è§†ä¸º0V
+// æ¬§å§†è¡¨
+// #define VIN_ZERO_TH         0.33f    // <æ­¤ç”µå‹è§†ä¸ºçŸ­è·¯(10Î©)
+#define VIN_ZERO_TH         0.96f    // <æ­¤ç”µå‹è§†ä¸ºçŸ­è·¯(50Î©)
 
-// ²ÉÑùµç×è£¨º¬ÄãÖ®Ç°Î¢µ÷¿É¼ÌĞø·ÅÔÚÕâÀïÍ³Ò»¹ÜÀí£©
-#define RS_OHM_RAW          51.0f     // 51¦¸
-#define RS_KOHM_RAW         5100.0f     // 5.1k¦¸
-#define RS_MOHM_RAW         510000.0f     // 510k¦¸
-// ¦¸ µµ£¨¡Ü510¦¸£©  ¡ª Êµ²âÂÔµÍÔ¼1.5%
+// é‡‡æ ·ç”µé˜»ï¼ˆå«ä½ ä¹‹å‰å¾®è°ƒå¯ç»§ç»­æ”¾åœ¨è¿™é‡Œç»Ÿä¸€ç®¡ç†ï¼‰
+#define RS_OHM_RAW          51.0f     // 51Î©
+#define RS_KOHM_RAW         5100.0f     // 5.1kÎ©
+#define RS_MOHM_RAW         510000.0f     // 510kÎ©
+// Î© æ¡£ï¼ˆâ‰¤510Î©ï¼‰  â€” å®æµ‹ç•¥ä½çº¦1.5%
 #define GAIN_OHM    1.015f
 #define OFFS_OHM    0.0f
 
-// k¦¸ µµ£¨0.51k ~ 51k¦¸£© ¡ª Êµ²âÂÔµÍÔ¼1%
+// kÎ© æ¡£ï¼ˆ0.51k ~ 51kÎ©ï¼‰ â€” å®æµ‹ç•¥ä½çº¦1%
 #define GAIN_KOHM   1.010f
 #define OFFS_KOHM   0.0f
 
-// M¦¸ µµ·Ö¶Î£¨¡İ75k¦¸£© ¡ª Êµ²âÆ«µÍÔ¼4%
+// MÎ© æ¡£åˆ†æ®µï¼ˆâ‰¥75kÎ©ï¼‰ â€” å®æµ‹åä½çº¦4%
 #define MOHM_SPLIT_OHMS   220000.0f
-#define GAIN_MOHM_LOW     1.044f   // 75k~220k Çø¼ä
+#define GAIN_MOHM_LOW     1.044f   // 75k~220k åŒºé—´
 #define OFFS_MOHM_LOW     0.0f
-#define GAIN_MOHM_HIGH    1.044f   // ¡İ470k Í¬ÑùĞŞÕı
+#define GAIN_MOHM_HIGH    1.044f   // â‰¥470k åŒæ ·ä¿®æ­£
 #define OFFS_MOHM_HIGH    0.0f
-// µç×è±íµµÎ»
+// ç”µé˜»è¡¨æ¡£ä½
 typedef enum { RANGE_OHM = 0, RANGE_KOHM, RANGE_MOHM } ohm_range_t;
-// LCD ÏÔÊ¾
+// LCD æ˜¾ç¤º
 #define LCD_UPDATE_MS         600U
-// === LCD ÏÔÊ¾»º³åÇø ===
+// === LCD æ˜¾ç¤ºç¼“å†²åŒº ===
 struct LCD_BUF_STRUCT
 {
     uint32_t last_update_ms;
-    /// @brief ÏÔÊ¾µÄÊı×Ö ±Ø¶¨ÊÇÕıÊı 0000~9999
+    /// @brief æ˜¾ç¤ºçš„æ•°å­— å¿…å®šæ˜¯æ­£æ•° 0000~9999
     uint16_t num4;
     uint8_t dotpos;
     uint8_t mA_overf_neg_A_V_O_kO;
     uint8_t bat_25_50_75_100_MO;
 };
 static struct LCD_BUF_STRUCT g_lcd_buf;
-// === µç³ØµçÁ¿¼ì²â ===
-#define BATT_ADC_CHANNEL      ADC_Channel_7   // ¡ï PC4 ¶ÔÓ¦µÄ ADC Í¨µÀ£¨Èô²»¶Ô£¬Çë¸Ä£©
-#define BATT_SAMPLE_PERIOD_MS 1000U           // ¡ï Ã¿ÃëÒ»´Î
+// === ç”µæ± ç”µé‡æ£€æµ‹ ===
+#define BATT_ADC_CHANNEL      ADC_Channel_7   // â˜… PC4 å¯¹åº”çš„ ADC é€šé“ï¼ˆè‹¥ä¸å¯¹ï¼Œè¯·æ”¹ï¼‰
+#define BATT_SAMPLE_PERIOD_MS 1000U           // â˜… æ¯ç§’ä¸€æ¬¡
 #define BATT_SAMPLES_N        3
-// ¡ï µçÁ¿·ÖµµãĞÖµ£¨°´Äã¸øµÄÃÅÏŞ£¬µ¥Î»£ºV£¬Õë¶ÔPC4²âµÃµÄµçÑ¹£©
+// â˜… ç”µé‡åˆ†æ¡£é˜ˆå€¼ï¼ˆæŒ‰ä½ ç»™çš„é—¨é™ï¼Œå•ä½ï¼šVï¼Œé’ˆå¯¹PC4æµ‹å¾—çš„ç”µå‹ï¼‰
 #define BATT_TH_4             1.55f
 #define BATT_TH_3             1.40f
 #define BATT_TH_2             1.25f
 #define BATT_TH_1             1.15f
-// === µç³ØµçÁ¿×´Ì¬»ú ===
+// === ç”µæ± ç”µé‡çŠ¶æ€æœº ===
 static struct {
     uint32_t next_ms;
-    float    v_filt;   // µÍÍ¨ºóµÄµçÑ¹
+    float    v_filt;   // ä½é€šåçš„ç”µå‹
     int      level;    // 0..4
 } g_batt;
-// === µçÑ¹±í²ÉÑù¼ä¸ôÊ±¼ä ===
+// === ç”µå‹è¡¨é‡‡æ ·é—´éš”æ—¶é—´ ===
 #ifndef VOLT_SAMPLE_PERIOD_MS
-#define VOLT_SAMPLE_PERIOD_MS   300U    // µçÁ÷ µçÑ¹ Å·Ä·±í ¸üĞÂÖÜÆÚ£º300ms
+#define VOLT_SAMPLE_PERIOD_MS   300U    // ç”µæµ ç”µå‹ æ¬§å§†è¡¨ æ›´æ–°å‘¨æœŸï¼š300ms
 #endif
-// µçÑ¹±í·ÖÑ¹¹«Ê½
+// ç”µå‹è¡¨åˆ†å‹å…¬å¼
 #ifndef K_VOLT_SLOPE
 // ((1000.0f+81.0f)/81.0f/2.0f)
 // #define K_VOLT_SLOPE            6.66f
 // ((1000.0f+81.0f)/81.0f*2.0f)
 #define K_VOLT_SLOPE            26.39f
 #endif
-#define VOLT_ZERO_OFFSET     +0.07f   // ÕıÏòÁãµãÆ¯ÒÆ
-// ÊÇ·ñ×öÉÏ/ÏÂÏŞÇ¯Î»£¨ÀıÈç 0~12V£©
+#define VOLT_ZERO_OFFSET     +0.07f   // æ­£å‘é›¶ç‚¹æ¼‚ç§»
+// æ˜¯å¦åšä¸Š/ä¸‹é™é’³ä½ï¼ˆä¾‹å¦‚ 0~12Vï¼‰
 #ifndef VOLT_MAX_V
 #define VOLT_MAX_V              12.0f
 #endif
 #ifndef VOLT_MIN_V
 #define VOLT_MIN_V              (-12.0f)
 #endif
-// === µçÑ¹±í×´Ì¬»ú ===
+// === ç”µå‹è¡¨çŠ¶æ€æœº ===
 typedef struct {
-    uint32_t next_ms;   // ÏÂ´ÎÔÊĞí²ÉÑùµÄÊ±¼ä´Á(ms)
-    float    last_v;    // ÉÏÒ»Ö¡µçÑ¹£¬¹©¶¶¶¯/±£ÁôÏÔÊ¾Ê¹ÓÃ£¨¿ÉÑ¡£©
+    uint32_t next_ms;   // ä¸‹æ¬¡å…è®¸é‡‡æ ·çš„æ—¶é—´æˆ³(ms)
+    float    last_v;    // ä¸Šä¸€å¸§ç”µå‹ï¼Œä¾›æŠ–åŠ¨/ä¿ç•™æ˜¾ç¤ºä½¿ç”¨ï¼ˆå¯é€‰ï¼‰
 } volt_ctx_t;
 
 static volt_ctx_t g_volt;
-// ===== µçÁ÷±í×´Ì¬»ú =====
+// ===== ç”µæµè¡¨çŠ¶æ€æœº =====
 typedef enum { AMP_S_MEASURE_mA, AMP_S_MEASURE_A } amp_state_t;
 
 static struct {
     amp_state_t st;
-    bool mAflag;     // false=A µµ, true=mA µµ
-    float vin, iamp; // ×î½üÒ»´ÎµÄ²âÁ¿Êı¾İ
+    bool mAflag;     // false=A æ¡£, true=mA æ¡£
+    float vin, iamp; // æœ€è¿‘ä¸€æ¬¡çš„æµ‹é‡æ•°æ®
 } g_amp;
-// ===== Å·Ä·±í×´Ì¬»ú =====
+// ===== æ¬§å§†è¡¨çŠ¶æ€æœº =====
 typedef enum { OHM_S_SELECT_RANGE = 0, OHM_S_MEASURE } ohm_state_t;
 
 static struct {
@@ -197,13 +197,13 @@ static struct {
     float vin;
     float rx_display;
 } g_ohm;
-// ===== ¹¦ÄÜº¯ÊıÉùÃ÷ =====
+// ===== åŠŸèƒ½å‡½æ•°å£°æ˜ =====
 void first_init(void);
 void deep_sleep(void);
-// ¿ÕÏĞ×Ô¶¯Ë¯Ãß¼ì²â
+// ç©ºé—²è‡ªåŠ¨ç¡çœ æ£€æµ‹
 static inline void Idle_OnDisplaySample(float v, uint32_t now_ms)
 {
-    // ·ÀÖ¹¡°Ê±ÖÓ»Ø²¦¡±µ¼ÖÂ¸º²îÖµ
+    // é˜²æ­¢â€œæ—¶é’Ÿå›æ‹¨â€å¯¼è‡´è´Ÿå·®å€¼
     if ((int32_t)(now_ms - g_idle.quiet_since_ms) < 0) {
         g_idle.quiet_since_ms = now_ms;
     }
@@ -211,26 +211,26 @@ static inline void Idle_OnDisplaySample(float v, uint32_t now_ms)
     if (!g_idle.have_last) {
         g_idle.last_v = v;
         g_idle.have_last = 1;
-        g_idle.quiet = 1;                // ³õÊ¼ÈÏÎª½øÈë°²¾²
+        g_idle.quiet = 1;                // åˆå§‹è®¤ä¸ºè¿›å…¥å®‰é™
         g_idle.quiet_since_ms = now_ms;
         return;
     }
 
     float denom = fabsf(g_idle.last_v);
-    if (denom < 0.6f) denom = 0.6f;    // ·À 0/¼«Ğ¡·ÖÄ¸£»°´ÄãµÄÁ¿¸Ù¸ø¸öºÏÀíÏÂÏŞ
+    if (denom < 0.6f) denom = 0.6f;    // é˜² 0/æå°åˆ†æ¯ï¼›æŒ‰ä½ çš„é‡çº²ç»™ä¸ªåˆç†ä¸‹é™
     float diff = fabsf(v - g_idle.last_v) / denom;
     g_idle.last_v = v;
 
-    // ³ÙÖÍÅĞ¶Ï£º<10% Î¬³Ö°²¾²£»>11% ÈÏÎª»îÔ¾£»ÖĞ¼äÇø±£³ÖÔ­×´Ì¬
+    // è¿Ÿæ»åˆ¤æ–­ï¼š<10% ç»´æŒå®‰é™ï¼›>11% è®¤ä¸ºæ´»è·ƒï¼›ä¸­é—´åŒºä¿æŒåŸçŠ¶æ€
     if (diff > CHANGE_THRESHOLD_OFF) {
         g_idle.quiet = 0;
-        g_idle.quiet_since_ms = now_ms;  // »îÔ¾¡úÖØÖÃ¼ÆÊ±
+        g_idle.quiet_since_ms = now_ms;  // æ´»è·ƒâ†’é‡ç½®è®¡æ—¶
     } else if (diff < CHANGE_THRESHOLD_ON) {
         if (!g_idle.quiet) {
-            g_idle.quiet = 1;            // ¸Õ½øÈë°²¾²¡ú´Ó´Ë¿Ì¿ªÊ¼¼ÆÊ±
+            g_idle.quiet = 1;            // åˆšè¿›å…¥å®‰é™â†’ä»æ­¤åˆ»å¼€å§‹è®¡æ—¶
             g_idle.quiet_since_ms = now_ms;
         }
-        // ÒÑ´¦ÓÚ°²¾²£º¼ì²éÊÇ·ñ´ïµ½ÁË´°¿Ú
+        // å·²å¤„äºå®‰é™ï¼šæ£€æŸ¥æ˜¯å¦è¾¾åˆ°äº†çª—å£
         if (g_idle.quiet &&
             (now_ms - g_idle.quiet_since_ms >= IDLE_WINDOW_MS) &&
             g_run_mode == RUN_MODE_NORMALWORK) {
@@ -244,20 +244,20 @@ static inline void Idle_OnDisplaySample(float v, uint32_t now_ms)
 }
 
 #pragma endregion
-#pragma region ´®¿ÚÇı¶¯
+#pragma region ä¸²å£é©±åŠ¨
 #if ENABLE_LOG
 /*******************************************************************************
 *Function:	UART_GPIO_Config
-*Description:	ÅäÖÃUARTÒı½Å
-*Input:		ÎŞ
-*Return:		ÎŞ
+*Description:	é…ç½®UARTå¼•è„š
+*Input:		æ— 
+*Return:		æ— 
 *Others:
-			¸Ãº¯Êı¸ºÔğÊ¹ÄÜUARTÄ£¿éÏà¹ØÒı½Å
+			è¯¥å‡½æ•°è´Ÿè´£ä½¿èƒ½UARTæ¨¡å—ç›¸å…³å¼•è„š
 *******************************************************************************/
 void UART_GPIO_Config(void)
 {
 
-	/* ÅäÖÃUART¹Ü½ÅµÄ¸´ÓÃ¹¦ÄÜ */
+	/* é…ç½®UARTç®¡è„šçš„å¤ç”¨åŠŸèƒ½ */
     if (LOG_UART==UART1)
     {
         GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_1, AFIO_AF_1,ENABLE);	//PB1 TX1
@@ -273,18 +273,18 @@ void UART_GPIO_Config(void)
 
 /*******************************************************************************
 *Function:	UART_Mode_Config
-*Description:	ÅäÖÃUART
-*Input:		ÎŞ
-*Return:		ÎŞ
+*Description:	é…ç½®UART
+*Input:		æ— 
+*Return:		æ— 
 *Others:
-			¸Ãº¯Êı¸ºÔğ³õÊ¼»¯UARTÄ£¿éµÄ¹¤×÷¼°Æä¹¤×÷·½Ê½
+			è¯¥å‡½æ•°è´Ÿè´£åˆå§‹åŒ–UARTæ¨¡å—çš„å·¥ä½œåŠå…¶å·¥ä½œæ–¹å¼
 *******************************************************************************/
 void UART_Mode_Config(void)
 {
 
 	UART_InitTypeDef  UART_InitStruct;
 
-	/*³õÊ¼»¯UART0*/
+	/*åˆå§‹åŒ–UART0*/
 	UART_InitStruct.UART_BaudRate = 9600;
 	UART_InitStruct.UART_WordLengthAndParity=UART_WordLengthAndParity_8D;
 	UART_InitStruct.UART_StopBitLength=UART_StopBitLength_1;
@@ -292,16 +292,16 @@ void UART_Mode_Config(void)
 	UART_InitStruct.UART_Receiver=UART_Receiver_Enable;
 	UART_InitStruct.UART_LoopbackMode=UART_LoopbackMode_Disable;
 
-    /*¿ªÆôÊÕ·¢¹¦ÄÜ*/
+    /*å¼€å¯æ”¶å‘åŠŸèƒ½*/
 	UART_Cmd(LOG_UART, ENABLE);
     UART_Init(LOG_UART, &UART_InitStruct);
 
 }
 /*******************************************************************************
 *Function:	UART_Driver
-*Description:	UARTÄ£¿éÇı¶¯º¯Êı
-*Input:		ÎŞ
-*Return:		ÎŞ
+*Description:	UARTæ¨¡å—é©±åŠ¨å‡½æ•°
+*Input:		æ— 
+*Return:		æ— 
 *Others:
 *******************************************************************************/
 void UART_Driver(void)
@@ -310,7 +310,7 @@ void UART_Driver(void)
 	UART_Mode_Config();
 }
 
-// ´®¿Ú·¢ËÍ×Ö·û´®º¯Êı
+// ä¸²å£å‘é€å­—ç¬¦ä¸²å‡½æ•°
 void UART1_SendString(const char* str)
 {
     while (*str)
@@ -321,14 +321,14 @@ void UART1_SendString(const char* str)
 }
 #endif
 #pragma endregion
-#pragma region ²Î¿¼µçÑ¹Êä³öÅäÖÃ
+#pragma region å‚è€ƒç”µå‹è¾“å‡ºé…ç½®
 /*******************************************************************************
 *Function:	ADC_Mode_Config
-*Description:	ÅäÖÃADC
-*Input:		ÎŞ
-*Return:		ÎŞ
+*Description:	é…ç½®ADC
+*Input:		æ— 
+*Return:		æ— 
 *Others:
-¸Ãº¯Êı¸ºÔğ³õÊ¼»¯ADCÄ£¿éµÄ¹¤×÷¼°Æä¹¤×÷·½Ê½
+è¯¥å‡½æ•°è´Ÿè´£åˆå§‹åŒ–ADCæ¨¡å—çš„å·¥ä½œåŠå…¶å·¥ä½œæ–¹å¼
 *******************************************************************************/
 void ADC_Driver(void)
 {
@@ -337,12 +337,12 @@ void ADC_Driver(void)
 	ADC_InitTypeDef  ADC_InitStruct;
 	ADC_StructInit(&ADC_InitStruct);
 	ADC_InitStruct.ADC_Prescaler = 48;						 	
-	ADC_InitStruct.ADC_Mode = ADC_Mode_Single;						//µ¥´Î×ª»»Ä£Ê½
+	ADC_InitStruct.ADC_Mode = ADC_Mode_Single;						//å•æ¬¡è½¬æ¢æ¨¡å¼
 	ADC_InitStruct.ADC_TriggerSource = ADC_TriggerSource_Software;
-	ADC_InitStruct.ADC_TimerTriggerSource=ADC_TimerTriggerSource_TIM1ADC;//¶¨Ê±Ô´´¥·¢Ñ¡ÔñTIM0ÊÂ¼ş
-	ADC_InitStruct.ADC_Align = ADC_Align_Left;					//×ó¶ÔÆë
+	ADC_InitStruct.ADC_TimerTriggerSource=ADC_TimerTriggerSource_TIM1ADC;//å®šæ—¶æºè§¦å‘é€‰æ‹©TIM0äº‹ä»¶
+	ADC_InitStruct.ADC_Align = ADC_Align_Left;					//å·¦å¯¹é½
 	ADC_InitStruct.ADC_Channel = ADC_Channel_1;//PA1
-	ADC_InitStruct.ADC_BGVoltage=ADC_BGVoltage_BG1v0;//BGSµçÑ¹1.0v
+	ADC_InitStruct.ADC_BGVoltage=ADC_BGVoltage_BG1v0;//BGSç”µå‹1.0v
 	ADC_InitStruct.ADC_ReferencePositive = ADC_ReferencePositive_BG2v0;
 	ADC_BGCRSetBGNC(ADC);// SET ADC_BGNC BIT
     
@@ -350,13 +350,13 @@ void ADC_Driver(void)
 
 	ADC_Init(ADC, &ADC_InitStruct);
 
-    // ¡ï É¨ÃèĞòÁĞ£ºĞòºÅ0=PA1(ADC1)¡¾²âÁ¿¶Ë¡¿£¬ĞòºÅ1=PC4(ADC7)¡¾µç³Ø¡¿
+    // â˜… æ‰«æåºåˆ—ï¼šåºå·0=PA1(ADC1)ã€æµ‹é‡ç«¯ã€‘ï¼Œåºå·1=PC4(ADC7)ã€ç”µæ± ã€‘
     ADC_ScanChannelConfig(ADC, ADC_Channel_1, 0);
     ADC_ScanChannelConfig(ADC, BATT_ADC_CHANNEL, 1);
     ADC_ScanChannelNumberConfig(ADC, 2);
     ADC_ScanCmd(ADC, ENABLE);
 
-    // £¨¿ÉÑ¡£©Ó²¼şÆ½¾ù
+    // ï¼ˆå¯é€‰ï¼‰ç¡¬ä»¶å¹³å‡
     ADC_AverageTimesConfig(ADC, ADC_AverageTimes_16);
     ADC_AverageCmd(ADC, ENABLE);
 
@@ -364,21 +364,21 @@ void ADC_Driver(void)
     while(!ADC_GetFlagStatus(ADC, ADC_FLAG_RDY));
 }
 #pragma endregion
-#pragma region ×Ô¶¯ĞİÃßºÍ°´¼üÂß¼­
-// PC5 ³¤°´°´¼üÊäÈëÅäÖÃ
+#pragma region è‡ªåŠ¨ä¼‘çœ å’ŒæŒ‰é”®é€»è¾‘
+// PC5 é•¿æŒ‰æŒ‰é”®è¾“å…¥é…ç½®
 static void PowerKey_GPIO_Init(void)
 {
     GPIO_InitTypeDef GPIO_InitStruct;
     GPIO_InitStruct.GPIO_Mode = GPIO_Mode_In;
     GPIO_InitStruct.GPIO_Pin  = GPIO_Pin_5;
-    GPIO_InitStruct.GPIO_Pull = GPIO_Pull_Up;   // ÉÏÀ­£¬°´ÏÂÎªµÍ
+    GPIO_InitStruct.GPIO_Pull = GPIO_Pull_Up;   // ä¸Šæ‹‰ï¼ŒæŒ‰ä¸‹ä¸ºä½
     GPIO_Init(GPIOC, &GPIO_InitStruct);
 }
 static void PowerKey_ResetCounters()
 {
     s_pwr_stable_ticks = 0;
     s_pwr_press_ticks  = 0;
-    s_pwr_last_sample  = GPIO_ReadDataBit(GPIOC, GPIO_Pin_5) == RESET ? 0 : 1;// ¼ÙÉèÎ´°´×´Ì¬£¬µÈÏû¶¶
+    s_pwr_last_sample  = GPIO_ReadDataBit(GPIOC, GPIO_Pin_5) == RESET ? 0 : 1;// å‡è®¾æœªæŒ‰çŠ¶æ€ï¼Œç­‰æ¶ˆæŠ–
 }
 static void TIM2_ENABLE(bool flag)
 {
@@ -394,73 +394,73 @@ static void TIM2_ENABLE(bool flag)
         TIM_Cmd(TIM2, DISABLE);
     }
 }
-// Ä¿±ê£ºTIM2 ²úÉú ~10ms ÖÜÆÚÖĞ¶Ï£¨100Hz£©
+// ç›®æ ‡ï¼šTIM2 äº§ç”Ÿ ~10ms å‘¨æœŸä¸­æ–­ï¼ˆ100Hzï¼‰
 static void TIM2_Init_10ms(void)
 {
     NVIC_InitTypeDef NVIC_InitStruct;
     TIM_TimeBaseInitTypeDef TIMB;
 
-    // ===== 1) »ñÈ¡ TIM2 µÄÊ±ÖÓÆµÂÊ =====
-    // ÊÓĞ¾Æ¬Ê±ÖÓÊ÷¶ø¶¨£ººÜ¶à M0/M3 ¶¨Ê±Æ÷¹ÒÔÚ APB£¨PCLK£©»òÖ±½Ó SYSCLK/HCLK¡£
-    // ÏÂÃæÒÀ´Î³¢ÊÔ£¬°´Äã SDK µÄ¿ÉÓÃº¯Êı×ÔĞĞÈ¡Éá£º
+    // ===== 1) è·å– TIM2 çš„æ—¶é’Ÿé¢‘ç‡ =====
+    // è§†èŠ¯ç‰‡æ—¶é’Ÿæ ‘è€Œå®šï¼šå¾ˆå¤š M0/M3 å®šæ—¶å™¨æŒ‚åœ¨ APBï¼ˆPCLKï¼‰æˆ–ç›´æ¥ SYSCLK/HCLKã€‚
+    // ä¸‹é¢ä¾æ¬¡å°è¯•ï¼ŒæŒ‰ä½  SDK çš„å¯ç”¨å‡½æ•°è‡ªè¡Œå–èˆï¼š
     uint32_t tim_clk = 0;
 
-    // ÈôÓĞ×¨ÃÅµÄ¶¨Ê±Æ÷Ê±ÖÓ²éÑ¯º¯Êı£¬ÇëÓÅÏÈÓÃËü£¨Ê¾Àı£©£º
+    // è‹¥æœ‰ä¸“é—¨çš„å®šæ—¶å™¨æ—¶é’ŸæŸ¥è¯¢å‡½æ•°ï¼Œè¯·ä¼˜å…ˆç”¨å®ƒï¼ˆç¤ºä¾‹ï¼‰ï¼š
     // tim_clk = RCC_GetClockFreq(RCC_TIM2CLK);
 
-    // ·ñÔòÓÃ PCLK »ò HCLK ×÷Îª TIM2 Ê±ÖÓÀ´Ô´£¨Á½ÕßÆäÒ»£©£º
-    if (tim_clk == 0) tim_clk = RCC_GetClockFreq(RCC_PCLK);   // ³£¼û£ºTIM2 ¹Ò APB1
-    if (tim_clk == 0) tim_clk = RCC_GetClockFreq(RCC_HCLK);    // ÍËÂ·£ºÓÃ HCLK
+    // å¦åˆ™ç”¨ PCLK æˆ– HCLK ä½œä¸º TIM2 æ—¶é’Ÿæ¥æºï¼ˆä¸¤è€…å…¶ä¸€ï¼‰ï¼š
+    if (tim_clk == 0) tim_clk = RCC_GetClockFreq(RCC_PCLK);   // å¸¸è§ï¼šTIM2 æŒ‚ APB1
+    if (tim_clk == 0) tim_clk = RCC_GetClockFreq(RCC_HCLK);    // é€€è·¯ï¼šç”¨ HCLK
 
     if (tim_clk == 0) {
-        // ¼«¶Ë·ÀÓù£ºÈô»¹ÊÇÄÃ²»µ½£¬Ä¬ÈÏ°´ 48MHz Ëã£¬È·±£²»»á³ıÒÔ 0
+        // æç«¯é˜²å¾¡ï¼šè‹¥è¿˜æ˜¯æ‹¿ä¸åˆ°ï¼Œé»˜è®¤æŒ‰ 48MHz ç®—ï¼Œç¡®ä¿ä¸ä¼šé™¤ä»¥ 0
         tim_clk = 48000000UL;
     }
 
-    // ===== 2) ¼ÆËã PSC/ARR£¬Ê¹µÃÒç³öÖÜÆÚ½Ó½ü 10ms =====
-    // ÎÒÃÇÒª 100Hz£ºperiod_counts = tim_clk / 100
+    // ===== 2) è®¡ç®— PSC/ARRï¼Œä½¿å¾—æº¢å‡ºå‘¨æœŸæ¥è¿‘ 10ms =====
+    // æˆ‘ä»¬è¦ 100Hzï¼šperiod_counts = tim_clk / 100
     uint32_t target_hz = 100U; // 10ms
-    uint32_t period_counts = (tim_clk + target_hz/2) / target_hz; // ËÄÉáÎåÈë
+    uint32_t period_counts = (tim_clk + target_hz/2) / target_hz; // å››èˆäº”å…¥
 
-    // Ô¼Êø£ºARR¡¢PSC ¶¼ÊÇ 16bit£¨0..65535£©£¬ÇÒÊµ¼Ê·ÖÆµ=PSC+1
-    // Ñ¡ÔñÒ»¸ö¾¡Á¿Ğ¡µÄ PSC£¬Ê¹ ARR ²»³¬¹ı 65535
-    uint32_t psc = (period_counts + 65535U) / 65536U;   // ÏòÉÏÈ¡£¬Ê¹ ARR<=65535
-    if (psc > 65535U) psc = 65535U;                     // ¼Ğ½ô
+    // çº¦æŸï¼šARRã€PSC éƒ½æ˜¯ 16bitï¼ˆ0..65535ï¼‰ï¼Œä¸”å®é™…åˆ†é¢‘=PSC+1
+    // é€‰æ‹©ä¸€ä¸ªå°½é‡å°çš„ PSCï¼Œä½¿ ARR ä¸è¶…è¿‡ 65535
+    uint32_t psc = (period_counts + 65535U) / 65536U;   // å‘ä¸Šå–ï¼Œä½¿ ARR<=65535
+    if (psc > 65535U) psc = 65535U;                     // å¤¹ç´§
     uint32_t arr = (period_counts / (psc + 1U));
     if (arr == 0) arr = 1;
     if (arr > 65535U) arr = 65535U;
 
-    // ÎªÁËÈÃÖÜÆÚ¸üÌù½ü 10ms£¬ÔÙ×öÒ»´ÎÏ¸µ÷£¨¿ÉÑ¡£©
+    // ä¸ºäº†è®©å‘¨æœŸæ›´è´´è¿‘ 10msï¼Œå†åšä¸€æ¬¡ç»†è°ƒï¼ˆå¯é€‰ï¼‰
     uint32_t actual_counts = (psc + 1U) * arr;
-    // Èç¹û²î¾à½Ï´ó£¬¿ÉÔÚ´Ë´¦Î¢µ÷ arr/psc£»Í¨³£ÒÑ×ã¹»£¬²»±ØÔÙ¸´ÔÓ»¯
+    // å¦‚æœå·®è·è¾ƒå¤§ï¼Œå¯åœ¨æ­¤å¤„å¾®è°ƒ arr/pscï¼›é€šå¸¸å·²è¶³å¤Ÿï¼Œä¸å¿…å†å¤æ‚åŒ–
 
-    // ===== 3) ³õÊ¼»¯ TIM2 =====
+    // ===== 3) åˆå§‹åŒ– TIM2 =====
     TIMB.TIM_Prescaler = (uint16_t)psc;
-    TIMB.TIM_AutoReload = (uint16_t)(arr - 1U);  // ×¢Òâ¶àÊı¿âÊÇĞ´ ARR = N-1
+    TIMB.TIM_AutoReload = (uint16_t)(arr - 1U);  // æ³¨æ„å¤šæ•°åº“æ˜¯å†™ ARR = N-1
     TIMB.TIM_Direction  = TIM_Direction_Up;
     TIM_TimeBaseInit(TIM2, &TIMB);
     TIM2_ENABLE(true);
-    // ÈÃTIM2ÔÚĞİÃßÊ±Ò²ÄÜ×ö³¤°´¼ÆÊ±
+    // è®©TIM2åœ¨ä¼‘çœ æ—¶ä¹Ÿèƒ½åšé•¿æŒ‰è®¡æ—¶
     NVIC_InitStruct.NVIC_IRQChannel = TIM2_IRQn;
     NVIC_InitStruct.NVIC_IRQChannelPriority = 0x00;
     NVIC_InitStruct.NVIC_IRQChannelCmd = ENABLE;
     NVIC_Init(&NVIC_InitStruct);
 }
-// ÅäÖÃ PC5 µÄÍâ²¿ÖĞ¶Ï£¬ÓÃÓÚĞİÃß»½ĞÑ¹¦ÄÜ
+// é…ç½® PC5 çš„å¤–éƒ¨ä¸­æ–­ï¼Œç”¨äºä¼‘çœ å”¤é†’åŠŸèƒ½
 static void Wake_Key_Init(void)
 {
 	NVIC_InitTypeDef NVIC_InitStruct;
-    //GPIO¶Ë¿ÚÖĞ¶Ï´¥·¢ÀàĞÍÑ¡Ôñ
+    //GPIOç«¯å£ä¸­æ–­è§¦å‘ç±»å‹é€‰æ‹©
 	EXTI_TriggerTypeConfig(EXTIC,GPIO_Pin_5,EXTI_Trigger_RisingFalling);
 
-	EXTI_ITConfig(EXTIC,GPIO_Pin_5,ENABLE);		//GPIO¶Ë¿ÚÖĞ¶ÏÊ¹ÄÜ
-	/*Ê¹ÄÜGPIOµÄNVIC¿ØÖÆÆ÷*/
+	EXTI_ITConfig(EXTIC,GPIO_Pin_5,ENABLE);		//GPIOç«¯å£ä¸­æ–­ä½¿èƒ½
+	/*ä½¿èƒ½GPIOçš„NVICæ§åˆ¶å™¨*/
 	NVIC_InitStruct.NVIC_IRQChannel = EXTIC_IRQn;
 	NVIC_InitStruct.NVIC_IRQChannelCmd = ENABLE;
 	NVIC_InitStruct.NVIC_IRQChannelPriority = 0x00;
 	NVIC_Init(&NVIC_InitStruct);
 }
-// Çå³ı PC5 µÄÍâ²¿ÖĞ¶Ï
+// æ¸…é™¤ PC5 çš„å¤–éƒ¨ä¸­æ–­
 static void Wake_Key_EXITDisable(void)
 {
     EXTI_ITConfig(EXTIC, GPIO_Pin_5, DISABLE);
@@ -469,17 +469,17 @@ static void Wake_Key_EXITDisable(void)
 }
 static inline void deep_sleep_close_gpio(void)
 {
-        // ¹Ø±ÕÆÁÄ»
+        // å…³é—­å±å¹•
         GPIO_AnalogRemapConfig(AFIOA, GPIO_Pin_All, DISABLE);
         GPIO_AnalogRemapConfig(AFIOB, GPIO_Pin_All, DISABLE);
         GPIO_AnalogRemapConfig(AFIOC, GPIO_Pin_All, DISABLE);
         GPIO_AnalogRemapConfig(AFIOD, GPIO_Pin_All, DISABLE);
-        // SWD½Ó¿Ú²»¿ÉÇå³ı¸´ÓÃ
+        // SWDæ¥å£ä¸å¯æ¸…é™¤å¤ç”¨
         GPIO_DigitalRemapConfig(AFIOA, GPIO_Pin_All,AFIO_AF_None,DISABLE);
         GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_All&(~GPIO_Pin_1),AFIO_AF_None,DISABLE);
         GPIO_DigitalRemapConfig(AFIOC, GPIO_Pin_All&(~GPIO_Pin_7),AFIO_AF_None,DISABLE);
         GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_All&(~GPIO_Pin_1),AFIO_AF_None,DISABLE);
-        // ¹Ø±ÕGPIO Ö»±£Áô PC5
+        // å…³é—­GPIO åªä¿ç•™ PC5
         GPIO_InitTypeDef GPIO_InitStructure;
         GPIO_InitStructure.GPIO_Pin = GPIO_Pin_All;	
         GPIO_InitStructure.GPIO_Mode=GPIO_Mode_In;	
@@ -490,12 +490,12 @@ static inline void deep_sleep_close_gpio(void)
         GPIO_InitStructure.GPIO_Pin = GPIO_Pin_All&(~GPIO_Pin_5);//WAKE KEY
         GPIO_Init(GPIOC, &GPIO_InitStructure);
 }
-// ½øÈëĞİÃß×´Ì¬µÄÂß¼­£¬¹Ø±ÕÍâÉè
+// è¿›å…¥ä¼‘çœ çŠ¶æ€çš„é€»è¾‘ï¼Œå…³é—­å¤–è®¾
 void deep_sleep(void)
 {
     if(g_run_mode == RUN_MODE_NORMALWORK)
     {
-        // ĞİÃßÌáÊ¾Òô
+        // ä¼‘çœ æç¤ºéŸ³
         PWM_Cmd(TIM1, ENABLE);
         delay_ms(30);
         PWM_Cmd(TIM1, DISABLE);
@@ -503,7 +503,7 @@ void deep_sleep(void)
         HT1621_Clear();
 
         LOGF("DEEPSLEEP ms_ticks=%u\r\n", s_ms_ticks);
-        // µÈ´ıPC5°´¼üËÉ¿ª
+        // ç­‰å¾…PC5æŒ‰é”®æ¾å¼€
         while (GPIO_ReadDataBit(GPIOC,GPIO_Pin_5)==0)
         {
             delay_ms(10);
@@ -513,25 +513,25 @@ void deep_sleep(void)
 
         deep_sleep_close_gpio();
 #if ENABLE_LOG
-        // ¹Ø±Õ UART
+        // å…³é—­ UART
         UART_Cmd(LOG_UART, DISABLE);
 #endif
-        // ´ò¿ªÍâ²¿ÖĞ¶Ï ÅäÖÃPC5Îª»½ĞÑÔ´
+        // æ‰“å¼€å¤–éƒ¨ä¸­æ–­ é…ç½®PC5ä¸ºå”¤é†’æº
         Wake_Key_Init();
-        SysTick->CTRL &= ~SysTick_CTRL_ENABLE_Msk;  // ½øË¯Ç°¹Ø±ÕÏµÍ³¶¨Ê±Æ÷
+        SysTick->CTRL &= ~SysTick_CTRL_ENABLE_Msk;  // è¿›ç¡å‰å…³é—­ç³»ç»Ÿå®šæ—¶å™¨
 
         g_run_mode = RUN_MODE_DEEPSLEEP;
         poweroff_request = 0;
-        // ÖØÖÃ²Î¿¼µçÑ¹2VµÄÊä³ö£¬ÏÂ´Î³õÊ¼»¯Ê±ÖØĞÂÆô¶¯2V²Î¿¼µçÑ¹Êä³ö
+        // é‡ç½®å‚è€ƒç”µå‹2Vçš„è¾“å‡ºï¼Œä¸‹æ¬¡åˆå§‹åŒ–æ—¶é‡æ–°å¯åŠ¨2Vå‚è€ƒç”µå‹è¾“å‡º
         ADC_BGCRResetBGNC(ADC);
-        // ½øÈëÉî¶ÈË¯Ãß
+        // è¿›å…¥æ·±åº¦ç¡çœ 
         PWR_EnterDeepSleepMode(PWR_DeepSleepEntry_WFI);
         g_run_mode = RUN_MODE_WAKEUP;
-        // ¡ª¡ª ´Ó EXTI »½ĞÑ·µ»Ø ¡ª¡ª ¹Ø±Õ»½ĞÑÓÃ EXTI£¬±ÜÃâÔËĞĞÌ¬ÂÒÖĞ¶Ï
+        // â€”â€” ä» EXTI å”¤é†’è¿”å› â€”â€” å…³é—­å”¤é†’ç”¨ EXTIï¼Œé¿å…è¿è¡Œæ€ä¹±ä¸­æ–­
         Wake_Key_EXITDisable();
 
         first_init();
-        // ¼ÇÂ¼Ê±¼ä´Á
+        // è®°å½•æ—¶é—´æˆ³
         uint32_t t0 = s_ms_ticks;
 #if ENABLE_LOG
         UART_Driver();
@@ -539,29 +539,29 @@ void deep_sleep(void)
 #endif
         LOGF("WAKEUP ticks=%u\r\n",s_ms_ticks);
 
-        // ÔÚ»½ĞÑºó±£³Ö°´×¡ 2 Ãë»Øµ½¹¤×÷Ì¬ ÈôÎ´³¤°´ 5sºóÖØĞÂË¯Ãß ÓÉTIM2ÖĞ¶Ï·şÎñ³ÌĞòĞŞ¸ÄÏµÍ³ÔËĞĞ×´Ì¬
+        // åœ¨å”¤é†’åä¿æŒæŒ‰ä½ 2 ç§’å›åˆ°å·¥ä½œæ€ è‹¥æœªé•¿æŒ‰ 5såé‡æ–°ç¡çœ  ç”±TIM2ä¸­æ–­æœåŠ¡ç¨‹åºä¿®æ”¹ç³»ç»Ÿè¿è¡ŒçŠ¶æ€
         while(g_run_mode == RUN_MODE_WAKEUP)
         {
-            // µ½Ê±Î´È·ÈÏ -> »ØË¯ 5000ms¼´5Ãë
+            // åˆ°æ—¶æœªç¡®è®¤ -> å›ç¡ 5000mså³5ç§’
             if ((s_ms_ticks - t0) >= POSTWAKE_LONGPRESS_TIMEOUT) {
                 TIM2_ENABLE(false);
                 g_run_mode = RUN_MODE_NORMALWORK;
                 LOGS("sleep again\r\n");
                 deep_sleep();
-                return; // ²»»á×ßµ½ÕâÀï
+                return; // ä¸ä¼šèµ°åˆ°è¿™é‡Œ
             }
         }
 
-        // idle_last_ms = s_ms_ticks;//ÖØÖÃ±ä»¯ÂÊ<10%µÄ120s¼ÆÊı
+        // idle_last_ms = s_ms_ticks;//é‡ç½®å˜åŒ–ç‡<10%çš„120sè®¡æ•°
 
         LOGF("NORMALWORK ms_ticks=%u\r\n",s_ms_ticks);
 
-        // ·µ»ØÕı³£¹¤×÷£¬Çå³ı±êÖ¾Î»£¬´ËÊ±ĞèÒªÔÙ´Îµ÷ÓÃÍòÓÃ±íÍâÉèÅäÖÃº¯Êı
+        // è¿”å›æ­£å¸¸å·¥ä½œï¼Œæ¸…é™¤æ ‡å¿—ä½ï¼Œæ­¤æ—¶éœ€è¦å†æ¬¡è°ƒç”¨ä¸‡ç”¨è¡¨å¤–è®¾é…ç½®å‡½æ•°
         hadSetMultimeterInit = false;
     }
 }
 #pragma endregion
-#pragma region ÍòÓÃ±íÀàĞÍÅĞ¶ÏÅäÖÃ
+#pragma region ä¸‡ç”¨è¡¨ç±»å‹åˆ¤æ–­é…ç½®
 void MultiMeterIOOutputConfig(bool enable)
 {
 	if (!enable)
@@ -583,28 +583,28 @@ void MultiMeterIOOutputConfig(bool enable)
     {
         GPIO_InitTypeDef GPIO_InitStruct;
 		GPIO_InitStruct.GPIO_Mode=GPIO_Mode_OutPP;
-		GPIO_InitStruct.GPIO_Pull = GPIO_Pull_NoPull;	//ÎŞÆ«ÖÃ
+		GPIO_InitStruct.GPIO_Pull = GPIO_Pull_NoPull;	//æ— åç½®
 		GPIO_InitStruct.GPIO_Pin=GPIO_Pin_2;
 		GPIO_Init(GPIOA, &GPIO_InitStruct);
 		GPIO_InitStruct.GPIO_Mode=GPIO_Mode_OutPP;
-		GPIO_InitStruct.GPIO_Pull = GPIO_Pull_NoPull;	//ÎŞÆ«ÖÃ
+		GPIO_InitStruct.GPIO_Pull = GPIO_Pull_NoPull;	//æ— åç½®
 		GPIO_InitStruct.GPIO_Pin=GPIO_Pin_3;
 		GPIO_Init(GPIOA, &GPIO_InitStruct);
     }
 }
 #pragma endregion
-#pragma region ÍòÓÃ±í¶ÁÈ¡µçÑ¹ºÍÊä³öÅäÖÃ
-// É¨Ãè ADC ²¢¸üĞÂ g_adc_pa1_raw ºÍ g_adc_pc4_raw
+#pragma region ä¸‡ç”¨è¡¨è¯»å–ç”µå‹å’Œè¾“å‡ºé…ç½®
+// æ‰«æ ADC å¹¶æ›´æ–° g_adc_pa1_raw å’Œ g_adc_pc4_raw
 static void ADC_ScanOnce(void)
 {
     ADC_StartOfConversion(ADC);
-    while(!ADC_GetFlagStatus(ADC, ADC_FLAG_EOS));           // µÈ¡°É¨ÃèÍê³É¡±
+    while(!ADC_GetFlagStatus(ADC, ADC_FLAG_EOS));           // ç­‰â€œæ‰«æå®Œæˆâ€
 
-    // ×¢Òâ£ºÈ¡¡°É¨ÃèĞòºÅ¡±¶ø²»ÊÇ¡°ÎïÀíÍ¨µÀºÅ¡±
+    // æ³¨æ„ï¼šå–â€œæ‰«æåºå·â€è€Œä¸æ˜¯â€œç‰©ç†é€šé“å·â€
     uint16_t d0 = (uint16_t)ADC_GetScanData(ADC, ADC_ScanChannel_0);
     uint16_t d1 = (uint16_t)ADC_GetScanData(ADC, ADC_ScanChannel_1);
 
-    g_adc_pa1_raw = (d0 >> 3);   // ×ó¶ÔÆë ¡ú »¹Ô­µ½ 12bit ·¶Î§
+    g_adc_pa1_raw = (d0 >> 3);   // å·¦å¯¹é½ â†’ è¿˜åŸåˆ° 12bit èŒƒå›´
     g_adc_pc4_raw = (d1 >> 3);
 }
 
@@ -616,21 +616,21 @@ static float read_vin(int n)
         acc += g_adc_pa1_raw;
     }
     uint16_t raw = (uint16_t)(acc / (uint32_t)n);
-    return ADC_TO_V(raw); // = raw * 2.0 / 4095£¨¼ÌĞøÊ¹ÓÃÄãµÄºê£©
+    return ADC_TO_V(raw); // = raw * 2.0 / 4095ï¼ˆç»§ç»­ä½¿ç”¨ä½ çš„å®ï¼‰
 }
 
-// M¦¸ µµ¶Ô Rs µÄÎ¢µ÷£¨°´Äã´ËÇ°¾­Ñé£ºµÍ/ÖĞ/¸ß×è×öÇáÎ¢²¹³¥£¬¿ÉÑ¡£©
+// MÎ© æ¡£å¯¹ Rs çš„å¾®è°ƒï¼ˆæŒ‰ä½ æ­¤å‰ç»éªŒï¼šä½/ä¸­/é«˜é˜»åšè½»å¾®è¡¥å¿ï¼Œå¯é€‰ï¼‰
 static inline float tune_Rs_Mohm(float vin)
 {
     float Rs = RS_MOHM_RAW;
-    if (vin > 1.34f)      Rs = RS_MOHM_RAW * 0.992f;   // ¸ß×è
-    else if (vin < 0.76f) Rs = RS_MOHM_RAW * 1.0153f; // µÍ×è
+    if (vin > 1.34f)      Rs = RS_MOHM_RAW * 0.992f;   // é«˜é˜»
+    else if (vin < 0.76f) Rs = RS_MOHM_RAW * 1.0153f; // ä½é˜»
     return Rs;
 }
 
 static inline float compute_rx(float vin, float Rs)
 {
-    // ¾­µäµç×è±í£ºRx = Rs * Vin / (Vref - Vin)£¬Vref=2.0V
+    // ç»å…¸ç”µé˜»è¡¨ï¼šRx = Rs * Vin / (Vref - Vin)ï¼ŒVref=2.0V
     return Rs * vin / (2.0f - vin);
 }
 
@@ -638,15 +638,15 @@ static void set_range_pins(ohm_range_t r)
 {
     switch (r)
     {
-        case RANGE_OHM:   // ¦¸ µµ£ºPA2=0, PA3=1
+        case RANGE_OHM:   // Î© æ¡£ï¼šPA2=0, PA3=1
             GPIO_ResetBits(GPIOA, GPIO_Pin_2);
             GPIO_SetBits(GPIOA,   GPIO_Pin_3);
             break;
-        case RANGE_KOHM:  // k¦¸ µµ£ºPA2=1, PA3=0
+        case RANGE_KOHM:  // kÎ© æ¡£ï¼šPA2=1, PA3=0
             GPIO_SetBits(GPIOA,   GPIO_Pin_2);
             GPIO_ResetBits(GPIOA, GPIO_Pin_3);
             break;
-        case RANGE_MOHM:  // M¦¸ µµ£ºPA2=1, PA3=1£¨»ò°´ÄãÓ²¼ş£©
+        case RANGE_MOHM:  // MÎ© æ¡£ï¼šPA2=1, PA3=1ï¼ˆæˆ–æŒ‰ä½ ç¡¬ä»¶ï¼‰
             GPIO_SetBits(GPIOA,   GPIO_Pin_2);
             GPIO_SetBits(GPIOA,   GPIO_Pin_3);
             break;
@@ -654,13 +654,13 @@ static void set_range_pins(ohm_range_t r)
 }
 
 static inline float _interp_err(float iabs, float e0, float efs, float ifs) {
-    // ÏßĞÔ²åÖµ£ºe(i) = e0 + (efs - e0) * (i/ifs), 0<=i<=ifs
+    // çº¿æ€§æ’å€¼ï¼še(i) = e0 + (efs - e0) * (i/ifs), 0<=i<=ifs
     if (iabs < 0.0f) iabs = 0.0f;
     if (iabs > ifs) iabs = ifs;
     return e0 + (efs - e0) * (iabs / ifs);
 }
 #pragma endregion
-#pragma region ³õÊ¼»¯ºÍÆÁÄ»ÏÔÊ¾
+#pragma region åˆå§‹åŒ–å’Œå±å¹•æ˜¾ç¤º
 
 void LCDInit(void)
 {
@@ -686,16 +686,16 @@ void LCDInit(void)
 
 static void LCD_DISPLAY_UPDATE(void)
 {
-    // 1ºê¶¨ÒåÁË 200ms ¸üĞÂÆÁÄ»
+    // 1å®å®šä¹‰äº† 200ms æ›´æ–°å±å¹•
     uint32_t now = s_ms_ticks;
     if ((int32_t)(now - g_lcd_buf.last_update_ms) < 0) return;
     g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
 
-    // Çå³ı¸ººÅ/Òç³ö
+    // æ¸…é™¤è´Ÿå·/æº¢å‡º
     g_lcd_buf.mA_overf_neg_A_V_O_kO &= ~(ICON_NEG|ICON_OVERF);
     uint32_t scaled = 0;
     uint8_t dotpos  = 0;
-    // ¸üĞÂ¶ÔÓ¦µÄ±íµÄÍ¼±ê¡¢¸ººÅ¡¢Òç³ö
+    // æ›´æ–°å¯¹åº”çš„è¡¨çš„å›¾æ ‡ã€è´Ÿå·ã€æº¢å‡º
     switch (meter_mode)
     {
     case METER_MODE_VOLT:
@@ -703,7 +703,7 @@ static void LCD_DISPLAY_UPDATE(void)
             scaled = (uint16_t)(g_volt.last_v * 100.0f);
             if (g_volt.last_v >= VOLT_MAX_V)
             {
-                // ÏÔÊ¾Òç³ö
+                // æ˜¾ç¤ºæº¢å‡º
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
                 scaled = 1200;
             }
@@ -717,30 +717,30 @@ static void LCD_DISPLAY_UPDATE(void)
             }
         }
         dotpos = 2;
-        // ¿ÕÏĞ±ä»¯ÂÊ<10%µÄĞİÃßÅĞ¶Ï
+        // ç©ºé—²å˜åŒ–ç‡<10%çš„ä¼‘çœ åˆ¤æ–­
         Idle_OnDisplaySample(scaled, s_ms_ticks);
         break;
     case METER_MODE_AMP:
-        // ÏÈÇåµôÁ¿¸ÙÎ»£¨A¡¢mA£©£¬±ÜÃâÉÏÒ»Ä£Ê½²ĞÁô
+        // å…ˆæ¸…æ‰é‡çº²ä½ï¼ˆAã€mAï¼‰ï¼Œé¿å…ä¸Šä¸€æ¨¡å¼æ®‹ç•™
         g_lcd_buf.mA_overf_neg_A_V_O_kO &= ~(ICON_AMP_A<<4 | ICON_AMP_MA);
-        // Ê¹ÓÃ¡°Í³Ò»¡±ÏÔÊ¾£ºÊ¼ÖÕÒÔ A Îªµ¥Î»£¬±£Áô 3 Î»Ğ¡Êı ¡ú num4=|I|*1000, dotpos=1
+        // ä½¿ç”¨â€œç»Ÿä¸€â€æ˜¾ç¤ºï¼šå§‹ç»ˆä»¥ A ä¸ºå•ä½ï¼Œä¿ç•™ 3 ä½å°æ•° â†’ num4=|I|*1000, dotpos=1
         {
             float i = g_amp.iamp;
             Idle_OnDisplaySample(g_amp.vin, s_ms_ticks);
-            // È¡¾ø¶ÔÖµ
+            // å–ç»å¯¹å€¼
             bool neg = (i < 0.0f);
             if (neg) {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_NEG;
                 i=-i;
             }
-            // ÏÔÊ¾ 1.xxx A
+            // æ˜¾ç¤º 1.xxx A
             if (i > 0.999f)
             {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_A<<4;
                 dotpos = 1;
-                // ÓÉÓÚÁãµãÆ¯ÒÆ£¬Êµ¼ÊÉÏµ½²»ÁË3A£¬Ö»ÄÜµÄµ½2.8A
+                // ç”±äºé›¶ç‚¹æ¼‚ç§»ï¼Œå®é™…ä¸Šåˆ°ä¸äº†3Aï¼Œåªèƒ½çš„åˆ°2.8A
                 if (i >= 2.94f){
-                    // ÏÔÊ¾Òç³ö
+                    // æ˜¾ç¤ºæº¢å‡º
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
                     i = I_FULLSCALE_A;
                 }
@@ -753,12 +753,12 @@ static void LCD_DISPLAY_UPDATE(void)
         }
         break;
     case METER_MODE_OHM:
-        // ÇåµôµçÑ¹/µçÁ÷/¦¸ÏµÍ¼±ê£¬±£Áôµç³ØÍâ¿ò
+        // æ¸…æ‰ç”µå‹/ç”µæµ/Î©ç³»å›¾æ ‡ï¼Œä¿ç•™ç”µæ± å¤–æ¡†
         g_lcd_buf.mA_overf_neg_A_V_O_kO &= ~(ICON_OHM<<4 | ICON_OHM_KO<<4);
-        // µÚ¶ş×Ö½ÚÖĞ£¬½öÇå³ı M¦¸ Î»
+        // ç¬¬äºŒå­—èŠ‚ä¸­ï¼Œä»…æ¸…é™¤ MÎ© ä½
         g_lcd_buf.bat_25_50_75_100_MO &= ~(ICON_OHM_MO<<4);
         {
-            // ÉĞÎ´×ª»¯ÎªËÄÎ»Êı×ÖµÄÔ­Ê¼µç×èÖµ
+            // å°šæœªè½¬åŒ–ä¸ºå››ä½æ•°å­—çš„åŸå§‹ç”µé˜»å€¼
             float rx = g_ohm.rx_display;
             Idle_OnDisplaySample(g_ohm.vin, s_ms_ticks);
             
@@ -781,10 +781,10 @@ static void LCD_DISPLAY_UPDATE(void)
             }
 
             if (rx <= 999.49f) {
-                // 0 ~ 999 ¦¸£¬ÕûÊıÏÔÊ¾
+                // 0 ~ 999 Î©ï¼Œæ•´æ•°æ˜¾ç¤º
                 scaled = (uint32_t)(rx + 0.5f);
                 dotpos = 0;
-                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OHM<<4;      // ¦¸
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OHM<<4;      // Î©
 
             } else if (rx < 100000.0f) {
                 // 1.00k ~ 99.99k
@@ -792,7 +792,7 @@ static void LCD_DISPLAY_UPDATE(void)
                 if (v_k > 99.99f) v_k = 99.99f;
                 scaled = (uint32_t)(v_k * 100.0f + 0.5f); // xx.xx
                 dotpos = 2;
-                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OHM_KO<<4;   // k¦¸
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OHM_KO<<4;   // kÎ©
 
             } else if (rx < 1000000.0f) {
                 // 100.0k ~ 999.9k
@@ -800,7 +800,7 @@ static void LCD_DISPLAY_UPDATE(void)
                 if (v_k > 999.9f) v_k = 999.9f;
                 scaled = (uint32_t)(v_k * 10.0f + 0.5f); // xxx.x
                 dotpos = 3;
-                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OHM_KO<<4;   // k¦¸
+                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OHM_KO<<4;   // kÎ©
 
             } else {
                 // 1.00M ~ 51.00M
@@ -814,7 +814,7 @@ static void LCD_DISPLAY_UPDATE(void)
                     dotpos = 2;
                 }
                 scaled = (uint32_t)(v_M * 100.0f + 0.5f); // xx.xx
-                g_lcd_buf.bat_25_50_75_100_MO |= ICON_OHM_MO<<4;     // M¦¸£¨ÔÚµÚ¶ş×Ö½Ú£©
+                g_lcd_buf.bat_25_50_75_100_MO |= ICON_OHM_MO<<4;     // MÎ©ï¼ˆåœ¨ç¬¬äºŒå­—èŠ‚ï¼‰
             }
         }
         break;
@@ -822,9 +822,9 @@ static void LCD_DISPLAY_UPDATE(void)
     default:
         break;
     }
-    // Çå³ıµç³ØµçÁ¿£¨±£³ÖÍâ¿ò£©
+    // æ¸…é™¤ç”µæ± ç”µé‡ï¼ˆä¿æŒå¤–æ¡†ï¼‰
     g_lcd_buf.bat_25_50_75_100_MO &= ~((ICON_BAT_25 << 4) | (ICON_BAT_50 << 4) | ICON_BAT_75 | ICON_BAT_100);
-    // ÏÔÊ¾µç³ØµçÁ¿
+    // æ˜¾ç¤ºç”µæ± ç”µé‡
     switch (g_batt.level)
     {
     case 4:
@@ -841,13 +841,13 @@ static void LCD_DISPLAY_UPDATE(void)
     }
     g_lcd_buf.dotpos = dotpos;
     g_lcd_buf.num4 = (uint16_t)scaled;
-    // ¸üĞÂËÄÎ»Êı×ÖºÍĞ¡ÊıµãÎ»ÖÃ
+    // æ›´æ–°å››ä½æ•°å­—å’Œå°æ•°ç‚¹ä½ç½®
     LCD_Show_digits(g_lcd_buf.num4, g_lcd_buf.dotpos);
     LCD_ShowIcon(g_lcd_buf.mA_overf_neg_A_V_O_kO, g_lcd_buf.bat_25_50_75_100_MO);
 }
 #pragma endregion
-#pragma region µç³ØµçÁ¿¼ì²â
-// ¡ï PC4 ½Ó ADC£º´ò¿ªÄ£Äâ¸´ÓÃ + ÊäÈëÎŞÉÏÏÂÀ­
+#pragma region ç”µæ± ç”µé‡æ£€æµ‹
+// â˜… PC4 æ¥ ADCï¼šæ‰“å¼€æ¨¡æ‹Ÿå¤ç”¨ + è¾“å…¥æ— ä¸Šä¸‹æ‹‰
 static void Battery_GPIO_Init(void)
 {
     GPIO_InitTypeDef gi;
@@ -856,7 +856,7 @@ static void Battery_GPIO_Init(void)
     gi.GPIO_Pull = GPIO_Pull_NoPull;
     GPIO_Init(GPIOC, &gi);
     GPIO_DigitalRemapConfig(AFIOC,GPIO_Pin_4,AFIO_AF_0,DISABLE);
-    GPIO_AnalogRemapConfig(AFIOC, GPIO_Pin_4, ENABLE);  // PC4¡úADC
+    GPIO_AnalogRemapConfig(AFIOC, GPIO_Pin_4, ENABLE);  // PC4â†’ADC
 }
 
 static int Battery_LevelFromV(float v)
@@ -871,9 +871,9 @@ static int Battery_LevelFromV(float v)
 void BatteryTask_Init(void)
 {
     g_batt.next_ms = s_ms_ticks;
-    g_batt.level   = -1;     // Î´¶¨¼¶
+    g_batt.level   = -1;     // æœªå®šçº§
 
-    // ³£¾ÃÏÔÊ¾µç³ØÍâ¿ò
+    // å¸¸ä¹…æ˜¾ç¤ºç”µæ± å¤–æ¡†
     g_lcd_buf.bat_25_50_75_100_MO |= ICON_BAT_BROAD;
 }
 
@@ -883,14 +883,14 @@ void BatteryTask_Update(void)
     g_batt.next_ms = s_ms_ticks + BATT_SAMPLE_PERIOD_MS;
 
     uint32_t adc_sum = 0;
-    // È¡ PC4 µÄµçÑ¹£»ÈçĞèÆ½¾ù¿ÉÑ­»· ADC_ScanOnce() ¶à´ÎÇóÆ½¾ù
+    // å– PC4 çš„ç”µå‹ï¼›å¦‚éœ€å¹³å‡å¯å¾ªç¯ ADC_ScanOnce() å¤šæ¬¡æ±‚å¹³å‡
     for (uint8_t i = 0; i < BATT_SAMPLES_N; i++)
     {
         ADC_ScanOnce();
         adc_sum += g_adc_pc4_raw;
     }
     g_adc_pc4_raw = adc_sum / BATT_SAMPLES_N;
-    // ×ª³ÉµçÑ¹ µç³Ø1.5V ×öÁË·ÖÑ¹
+    // è½¬æˆç”µå‹ ç”µæ± 1.5V åšäº†åˆ†å‹
     float v = 2 * ADC_TO_V(g_adc_pc4_raw);
 
     int lvl = Battery_LevelFromV(v);
@@ -901,7 +901,7 @@ void BatteryTask_Update(void)
 }
 #pragma endregion
 
-#pragma region ·äÃùÆ÷³õÊ¼»¯
+#pragma region èœ‚é¸£å™¨åˆå§‹åŒ–
 void BuzzerInit(void)
 {
     GPIO_DigitalRemapConfig(AFIOC, GPIO_Pin_6, AFIO_AF_2,ENABLE);//CH1
@@ -909,33 +909,33 @@ void BuzzerInit(void)
     PWM_TimeBaseInitTypeDef PWM_TimeBaseInitType;
 	PWM_OCInitTypeDef OutInit;
 
-	/* Ê±ÖÓÑ¡Ôñ */
+	/* æ—¶é’Ÿé€‰æ‹© */
 	PWM_TimeBaseInitType.PWM_ClockSource = PWM_ClockSource_SYSCLK;
-	/* ÖĞÑë¼ÆÊıÄ£Ê½ -- ²»¿ªÆô */
+	/* ä¸­å¤®è®¡æ•°æ¨¡å¼ -- ä¸å¼€å¯ */
 	PWM_TimeBaseInitType.PWM_CenterAlignedMode = PWM_CenterAlignedMode_Disable;
-	/* ¼ÆÊıÆ÷¼ÆÊıÄ£Ê½£¬ÉèÖÃÎªÏòÉÏ¼ÆÊı */
+	/* è®¡æ•°å™¨è®¡æ•°æ¨¡å¼ï¼Œè®¾ç½®ä¸ºå‘ä¸Šè®¡æ•° */
 	PWM_TimeBaseInitType.PWM_Direction = PWM_Direction_Up;
-	/* ÖÜÆÚÆ¥Åä¼Ä´æÆ÷,ÀÛ¼ÆMR0+1¸öÆµÂÊºó²úÉúÒ»¸ö¸üĞÂ»òÕßÖĞ¶Ï ¸ù¾İÇı¶¯¼ÆÊıÆ÷1M ¼ÆËã¼ÓÔØÖµ369Ê± Ç¡ºÃ2.7kHz·ûºÏ·äÃùÆ÷µÄ×î¼ÑÆµÂÊ*/
+	/* å‘¨æœŸåŒ¹é…å¯„å­˜å™¨,ç´¯è®¡MR0+1ä¸ªé¢‘ç‡åäº§ç”Ÿä¸€ä¸ªæ›´æ–°æˆ–è€…ä¸­æ–­ æ ¹æ®é©±åŠ¨è®¡æ•°å™¨1M è®¡ç®—åŠ è½½å€¼369æ—¶ æ°å¥½2.7kHzç¬¦åˆèœ‚é¸£å™¨çš„æœ€ä½³é¢‘ç‡*/
 	PWM_TimeBaseInitType.PWM_AutoReloadValue = 369;// 369
-	/* Çı¶¯CNT¼ÆÊıÆ÷µÄÊ±ÖÓ = Fcksys/(psc+1) 48M·ÖÆµºó±ä³É1M*/ 
+	/* é©±åŠ¨CNTè®¡æ•°å™¨çš„æ—¶é’Ÿ = Fcksys/(psc+1) 48Måˆ†é¢‘åå˜æˆ1M*/ 
 	PWM_TimeBaseInitType.PWM_Prescaler = 47;
 
-    /* ³õÊ¼»¯TIM1*/
+    /* åˆå§‹åŒ–TIM1*/
 	PWM_TimeBaseInit(TIM1,&PWM_TimeBaseInitType);
 
-	/* ÅäÖÃÎªPWMÊä³öÍ¨µÀÎª1Í¨µÀ*/
+	/* é…ç½®ä¸ºPWMè¾“å‡ºé€šé“ä¸º1é€šé“*/
 	OutInit.PWM_Channel = PWM_Channel_1;
-    /* ÅäÖÃÎªPWMÊä³öÄ£Ê½ */	
+    /* é…ç½®ä¸ºPWMè¾“å‡ºæ¨¡å¼ */	
 	OutInit.PWM_OCMode = TIM_OCMode_PWM1;
-    /* ÅäÖÃÊä³ö */	
+    /* é…ç½®è¾“å‡º */	
 	OutInit.PWM_OCOutput = PWM_OCOutput_Enable;
-    /* ÉèÖÃPWM¿ÕÏĞÊ±ºòµÄÊä³öµçÆ½×´Ì¬ */
+    /* è®¾ç½®PWMç©ºé—²æ—¶å€™çš„è¾“å‡ºç”µå¹³çŠ¶æ€ */
     OutInit.PWM_OCIdleState = PWM_OCIdleState_Low;
     OutInit.PWM_OCValue = 185;
-    /* ÅäÖÃPWM±È½ÏÊä³ö¼«ĞÔ*/	
+    /* é…ç½®PWMæ¯”è¾ƒè¾“å‡ºææ€§*/	
     OutInit.PWM_OCPolarity = PWM_OCPolarity_High;
 
-    // Èç¹ûÄã²»ÓÃ»¥²¹Í¨µÀ£¬ÏÔÊ½¹Ø±ÕÒ²¿ÉÒÔ£¨¿ÉĞ´¿É²»Ğ´£¬StructInit ÒÑ¸øÄ¬ÈÏÖµ£©£º
+    // å¦‚æœä½ ä¸ç”¨äº’è¡¥é€šé“ï¼Œæ˜¾å¼å…³é—­ä¹Ÿå¯ä»¥ï¼ˆå¯å†™å¯ä¸å†™ï¼ŒStructInit å·²ç»™é»˜è®¤å€¼ï¼‰ï¼š
     OutInit.PWM_OCNOutput    = PWM_OCNOutput_Disable;
     OutInit.PWM_OCNPolarity  = PWM_OCNPolarity_Low;
     OutInit.PWM_OCNIdleState = PWM_OCNIdleState_Low;
@@ -943,29 +943,29 @@ void BuzzerInit(void)
     PWM_OCInit(TIM1, &OutInit);
 }
 #pragma endregion
-#pragma region µçÑ¹±íÒµÎñÂß¼­
+#pragma region ç”µå‹è¡¨ä¸šåŠ¡é€»è¾‘
 
-// ¡ª¡ª£¨¿ÉÑ¡£©ÄãµÄ¡°2·ÖÖÓ <10% ±ä»¯×Ô¶¯ĞİÃß¡±µÄ¼ì²â ¡ª¡ª
-// ÈôÒÑ¼¯³É IdleDetector_*£¬¿ÉÔÚ Update Àïµ÷ÓÃ IdleDetector_Update(v_meas);
+// â€”â€”ï¼ˆå¯é€‰ï¼‰ä½ çš„â€œ2åˆ†é’Ÿ <10% å˜åŒ–è‡ªåŠ¨ä¼‘çœ â€çš„æ£€æµ‹ â€”â€”
+// è‹¥å·²é›†æˆ IdleDetector_*ï¼Œå¯åœ¨ Update é‡Œè°ƒç”¨ IdleDetector_Update(v_meas);
 
-// Ğ¡¹¤¾ß£º°Ñ dv -> ÎïÀíµçÑ¹£¨V£©
+// å°å·¥å…·ï¼šæŠŠ dv -> ç‰©ç†ç”µå‹ï¼ˆVï¼‰
 static inline float Volt_From_DV(float dv) {
     return dv * K_VOLT_SLOPE;
 }
 
 void VoltTask_Init(void)
 {
-    g_volt.next_ms = s_ms_ticks;  // Á¢¼´¿ÉÒÔ¸üĞÂ
+    g_volt.next_ms = s_ms_ticks;  // ç«‹å³å¯ä»¥æ›´æ–°
     g_volt.last_v  = 0.0f;
 
-    // ¹Ì¶¨ÏÔÊ¾·ûºÅ V
+    // å›ºå®šæ˜¾ç¤ºç¬¦å· V
     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_VOLT<<4;
 }
 
-/* ========== µ¥²½¸üĞÂ£ºÎŞ×èÈû¡¢ÎŞËÀÑ­»· ========== */
+/* ========== å•æ­¥æ›´æ–°ï¼šæ— é˜»å¡ã€æ— æ­»å¾ªç¯ ========== */
 void VoltTask_Update(void)
 {
-    // 1) ½ÚÁ÷£ºµ½µãÔÙ²â
+    // 1) èŠ‚æµï¼šåˆ°ç‚¹å†æµ‹
     uint32_t now = s_ms_ticks;
     if ((int32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
     g_volt.next_ms = now;
@@ -973,29 +973,29 @@ void VoltTask_Update(void)
     float v_raw = read_vin(AVG_N);
     // LOGF("ticks=%u v=%d idle=%d\r\n", s_ms_ticks,(int)(v_raw*1000.0f+0.5f),idle_last_ms);
 
-    // ¶ÔÓ¦»»Ëã¹«Ê½ÊÇ ( vout - 0.9983 ) * 10000.0 / 379.2
+    // å¯¹åº”æ¢ç®—å…¬å¼æ˜¯ ( vout - 0.9983 ) * 10000.0 / 379.2
     float dv = V_DV(v_raw);
-    // ¼õ»ºÎ¢Ğ¡µÄ²¨¶¯
-    float v_tmp = Volt_From_DV(dv);    // ÕæÊµÊäÈë£¨V£¬´øÕı¸ººÅ£©
-    // ÕıÏòÁãµãÆ¯ÒÆ
+    // å‡ç¼“å¾®å°çš„æ³¢åŠ¨
+    float v_tmp = Volt_From_DV(dv);    // çœŸå®è¾“å…¥ï¼ˆVï¼Œå¸¦æ­£è´Ÿå·ï¼‰
+    // æ­£å‘é›¶ç‚¹æ¼‚ç§»
     // v_tmp += VOLT_ZERO_OFFSET;
     
     float vabs = fabsf(v_tmp);
-    // ÃÅÏŞµçÑ¹
+    // é—¨é™ç”µå‹
     if (vabs <= 0.04f) 
         v_tmp = 0.f;
     else if (vabs <= VOLT_ZERO_OFFSET) 
         v_tmp *= 0.5f;
     else {
-        // ÕıÏòÁãµãÆ¯ÒÆ£ºÖØĞÂ²âÁ¿Õı¸ºµçÑ¹µÄÎó²î-12V -6V -0.1V +0.1V +6V +12V
+        // æ­£å‘é›¶ç‚¹æ¼‚ç§»ï¼šé‡æ–°æµ‹é‡æ­£è´Ÿç”µå‹çš„è¯¯å·®-12V -6V -0.1V +0.1V +6V +12V
         vabs += VOLT_ZERO_OFFSET;
-        // ¢Û Õı/·´ÏòÏßĞÔÎó²îÄ£ĞÍ¿Û³ı
+        // â‘¢ æ­£/åå‘çº¿æ€§è¯¯å·®æ¨¡å‹æ‰£é™¤
         // float e = _interp_err(vabs, 0, 0.04f, VOLT_MAX_V);
         // if (v_tmp >= 0.0f) {
-        //     // ÕıÏòÎó²î
+        //     // æ­£å‘è¯¯å·®
         //     vabs += e;
         // } else {
-        //     // ·´ÏòÎó²î
+        //     // åå‘è¯¯å·®
         //     vabs -= e;
         // }
         v_tmp = v_tmp >= 0.0f ? vabs : -vabs;
@@ -1010,7 +1010,7 @@ void VoltTask_Update(void)
     //     g_volt.last_v = v_tmp;
     // }else
     // {
-    //     // ÕıµçÑ¹ÁãµãÆ¯ÒÆ
+    //     // æ­£ç”µå‹é›¶ç‚¹æ¼‚ç§»
     //     if (g_volt.last_v > 0.0f)
     //     {
     //         g_volt.last_v -= 0.1f;
@@ -1018,7 +1018,7 @@ void VoltTask_Update(void)
     //     g_volt.last_v += delta * 0.5f;
     // }
     
-    // // ÉáÆúÎ¢Ğ¡µçÑ¹
+    // // èˆå¼ƒå¾®å°ç”µå‹
     // if (fabs(g_volt.last_v) <= 0.05f)
     // {
     //     g_volt.last_v = 0.0f;
@@ -1026,39 +1026,39 @@ void VoltTask_Update(void)
     g_volt.last_v = v_tmp;
 }
 #pragma endregion
-#pragma region µçÁ÷±íÒµÎñÂß¼­
+#pragma region ç”µæµè¡¨ä¸šåŠ¡é€»è¾‘
 void AmpTask_Init(void)
 {
-    // PA2 ×÷ÎªÁ¿³Ì¿ØÖÆ£º0=Aµµ£¬1=mAµµ
+    // PA2 ä½œä¸ºé‡ç¨‹æ§åˆ¶ï¼š0=Aæ¡£ï¼Œ1=mAæ¡£
     GPIO_InitTypeDef GPIO_InitStruct;
     GPIO_InitStruct.GPIO_Mode = GPIO_Mode_OutPP;
     GPIO_InitStruct.GPIO_Pull = GPIO_Pull_NoPull;
     GPIO_InitStruct.GPIO_Pin  = GPIO_Pin_2;
     GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-    GPIO_SetBits(GPIOA, GPIO_Pin_2); // Ä¬ÈÏ mA µµ
+    GPIO_SetBits(GPIOA, GPIO_Pin_2); // é»˜è®¤ mA æ¡£
     g_amp.mAflag = true;
     g_amp.st     = AMP_S_MEASURE_mA;
     g_amp.iamp = 0.0f;
 
-    g_volt.next_ms = s_ms_ticks;  // Á¢¼´¿ÉÒÔ¸üĞÂ
+    g_volt.next_ms = s_ms_ticks;  // ç«‹å³å¯ä»¥æ›´æ–°
     LOGS("Amp init: mA-range (PA2=1)\r\n");
 }
 static inline float current_compensate(float i_meas)
 {
     float i = i_meas;
-    // ¢Ù ÕıÏòÁãµãµÖÏû
+    // â‘  æ­£å‘é›¶ç‚¹æŠµæ¶ˆ
     // if (i>0.f)
     // {
     //     i-= I_ZERO_OFFSET_A;
     // }
-    // µÖÏûÁãµãÎó²îºó£¬Èç¹ûÊÇÎ¢Ğ¡µÄµçÁ÷£¬ÊÓÎª 0mA
+    // æŠµæ¶ˆé›¶ç‚¹è¯¯å·®åï¼Œå¦‚æœæ˜¯å¾®å°çš„ç”µæµï¼Œè§†ä¸º 0mA
     if (fabsf(i) <= I_DEADBAND_A) return 0.0f;
 
-    // ¢Û Õı/·´Ïò·Ö¿ªÏßĞÔÎó²îÄ£ĞÍ²¢¿Û³ı
+    // â‘¢ æ­£/åå‘åˆ†å¼€çº¿æ€§è¯¯å·®æ¨¡å‹å¹¶æ‰£é™¤
     float iabs = fabsf(i);
     if (i >= 0) {
-        // ÕıÏòÎó²î£º¶ÁÊı¡°Æ«¸ß¡± ¡ú ĞèÒª¼õÈ¥Ò»¸öÕıµÄ·ùÖµ
+        // æ­£å‘è¯¯å·®ï¼šè¯»æ•°â€œåé«˜â€ â†’ éœ€è¦å‡å»ä¸€ä¸ªæ­£çš„å¹…å€¼
         float e = _interp_err(iabs, ERR_POS_AT0_A, ERR_POS_ATFS_A, I_FULLSCALE_A);
         i += e*0.5f;
         if (i<0.f)
@@ -1066,7 +1066,7 @@ static inline float current_compensate(float i_meas)
             i=0.f;
         }
     } else {
-        // ·´ÏòÎó²î£º¶ÁÊı¡°Æ«µÍ¡±£¨¸ü¸º£© ¡ú ĞèÒª¼Ó»ØÒ»¸ö·ùÖµ
+        // åå‘è¯¯å·®ï¼šè¯»æ•°â€œåä½â€ï¼ˆæ›´è´Ÿï¼‰ â†’ éœ€è¦åŠ å›ä¸€ä¸ªå¹…å€¼
         float e = _interp_err(iabs, ERR_NEG_AT0_A, ERR_NEG_ATFS_A, I_FULLSCALE_A);
         i -= e*0.5f;
         if (i>0.f)
@@ -1080,15 +1080,15 @@ static inline float current_compensate(float i_meas)
 /*
 void AmpTask_Update(void)
 {
-    // 1) ½ÚÁ÷£ºµ½µãÔÙ²â
+    // 1) èŠ‚æµï¼šåˆ°ç‚¹å†æµ‹
     uint32_t now = s_ms_ticks;
     if ((int32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
     g_volt.next_ms = now;
-    // ÎŞÂË²¨
+    // æ— æ»¤æ³¢
     g_amp.vin = read_vin(AVG_N);
 
     float dv = V_DV(g_amp.vin);
-    if (fabsf(dv) < ZERO_BAND_V) {                // ¡ï ÁãµãËÀÇø£º|¦¤V|<4mV ÊÓÎª 0
+    if (fabsf(dv) < ZERO_BAND_V) {                // â˜… é›¶ç‚¹æ­»åŒºï¼š|Î”V|<4mV è§†ä¸º 0
         if (g_amp.mAflag)
         {
             g_amp.iamp = 0.0f;
@@ -1099,12 +1099,12 @@ void AmpTask_Update(void)
         }
         return; 
     }
-    // µçÁ÷±í¸Ä³É²î·ÖÊäÈë£¬Òò´ËĞèÒª³Ë 2.0f µÃµ½×îÖÕµÄµçÁ÷
+    // ç”µæµè¡¨æ”¹æˆå·®åˆ†è¾“å…¥ï¼Œå› æ­¤éœ€è¦ä¹˜ 2.0f å¾—åˆ°æœ€ç»ˆçš„ç”µæµ
     switch (g_amp.st)
     {
     case AMP_S_MEASURE_mA:
-        g_amp.iamp = dv * MA_SLOPE_FIX / GAIN_mA;// mA·Å´óÁË34±¶
-        // ÕıÏòµçÑ¹ÓĞÆ«ÖÃ£¬·´Ó³µ½²âÁ¿µçÁ÷ÉÏ£¬µ¼ÖÂÕıÏòµçÁ÷ÓÉ0.004AµÄÁãµãÆ¯ÒÆ£¬·´ÏòÔòÃ»ÓĞ
+        g_amp.iamp = dv * MA_SLOPE_FIX / GAIN_mA;// mAæ”¾å¤§äº†34å€
+        // æ­£å‘ç”µå‹æœ‰åç½®ï¼Œåæ˜ åˆ°æµ‹é‡ç”µæµä¸Šï¼Œå¯¼è‡´æ­£å‘ç”µæµç”±0.004Açš„é›¶ç‚¹æ¼‚ç§»ï¼Œåå‘åˆ™æ²¡æœ‰
         // if (g_amp.iamp>0.f)
         // {
         //     if (g_amp.iamp<0.005f)
@@ -1116,9 +1116,9 @@ void AmpTask_Update(void)
         //     }
         // }
         LOGF("mA=%d v=%d\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
-        // ÍË³öÌõ¼ş
+        // é€€å‡ºæ¡ä»¶
         if (g_amp.iamp >= I_MA_MAX||g_amp.iamp <= -I_MA_MAX) {
-            // ³¬ mA µµÉÏÏŞ -> ÖØĞÂÅĞµµ mAµµÖ»ÄÜ²âµ½280mA
+            // è¶… mA æ¡£ä¸Šé™ -> é‡æ–°åˆ¤æ¡£ mAæ¡£åªèƒ½æµ‹åˆ°280mA
             LOGS("mA->A\r\n");
             GPIO_ResetBits(GPIOA, GPIO_Pin_2);
             g_amp.mAflag = false;
@@ -1128,22 +1128,22 @@ void AmpTask_Update(void)
         break;
 
     case AMP_S_MEASURE_A:
-        g_amp.iamp = dv * 10.0f / GAIN_A; // A·Å´óÁË4±¶
-        // Îó²î²¹³¥ 10mA
+        g_amp.iamp = dv * 10.0f / GAIN_A; // Aæ”¾å¤§äº†4å€
+        // è¯¯å·®è¡¥å¿ 10mA
         // if (g_amp.iamp<1.f)
         // {
         //     g_amp.iamp += 0.01f;
         // }
         LOGF("A=%d v=%d\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
-        // ÍË³öÌõ¼ş£ºAµµ²»²âĞ¡µçÁ÷£¬AµµÒª²âµ½280mAÒÔÉÏµÄ
+        // é€€å‡ºæ¡ä»¶ï¼šAæ¡£ä¸æµ‹å°ç”µæµï¼ŒAæ¡£è¦æµ‹åˆ°280mAä»¥ä¸Šçš„
         // if (g_amp.iamp <= I_MA_MAX && g_amp.iamp >= -I_MA_MAX) {
-        //     // ³¬ A µµÏÂÏŞ -> ÖØĞÂÅĞµµ Aµµ²»²âĞ¡µçÁ÷£¬AµµÒª²âµ½294mAÒÔÉÏµÄ
+        //     // è¶… A æ¡£ä¸‹é™ -> é‡æ–°åˆ¤æ¡£ Aæ¡£ä¸æµ‹å°ç”µæµï¼ŒAæ¡£è¦æµ‹åˆ°294mAä»¥ä¸Šçš„
         //     LOGS("A->mA\r\n");
         //     GPIO_SetBits(GPIOA, GPIO_Pin_2);
         //     g_amp.mAflag = true;
         //     g_amp.st = AMP_S_MEASURE_mA;
         // }
-        // ³¬ A µµÉÏÏŞ
+        // è¶… A æ¡£ä¸Šé™
         if (g_amp.iamp >= I_FULLSCALE_A) {
             LOGS("OVER: >=2.5A\r\n");
             g_amp.iamp = I_FULLSCALE_A;
@@ -1158,17 +1158,17 @@ void AmpTask_Update(void)
 */
 void AmpTask_Update2(void)
 {
-    // ½ÚÁ÷£ºµ½µãÔÙ²â
+    // èŠ‚æµï¼šåˆ°ç‚¹å†æµ‹
     uint32_t now = s_ms_ticks;
     if ((int32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
     g_volt.next_ms = now;
 
     g_amp.vin  = read_vin(AVG_N);
     
-    g_amp.iamp = V_DV(g_amp.vin) / 3.33f * 10.0f; // A·Å´óÁË4±¶
-    g_amp.iamp = current_compensate(g_amp.iamp);  // ¡ï Îó²î²¹³¥
+    g_amp.iamp = V_DV(g_amp.vin) / 3.33f * 10.0f; // Aæ”¾å¤§äº†4å€
+    g_amp.iamp = current_compensate(g_amp.iamp);  // â˜… è¯¯å·®è¡¥å¿
 
-    // ³¬ A µµÉÏÏŞ
+    // è¶… A æ¡£ä¸Šé™
     if (g_amp.iamp >= I_FULLSCALE_A) {
         LOGS("OVER: >=2.5A\r\n");
         g_amp.iamp = I_FULLSCALE_A;
@@ -1179,28 +1179,28 @@ void AmpTask_Update2(void)
     LOGF("mA=%d v=%d\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
 }
 #pragma endregion
-#pragma region Å·Ä·±íÒµÎñÂß¼­
+#pragma region æ¬§å§†è¡¨ä¸šåŠ¡é€»è¾‘
 void OhmTask_Init(void)
 {
-    // 51M¦¸
+    // 51MÎ©
     g_ohm.rx_display = 51000000.0f;
     g_volt.next_ms = s_ms_ticks;
 
-    MultiMeterIOOutputConfig(true); // ĞèÒª¿ØÖÆPA2/PA3Ê±×ªÎªÊä³ö
-    g_ohm.range = RANGE_KOHM; // ¿ª»úÄ¬ÈÏ´¦ÓÚk¦¸µµ£¬È»ºó¸ù¾İµçÑ¹ÇĞµ½ ¦¸»òM¦¸µµ
+    MultiMeterIOOutputConfig(true); // éœ€è¦æ§åˆ¶PA2/PA3æ—¶è½¬ä¸ºè¾“å‡º
+    g_ohm.range = RANGE_KOHM; // å¼€æœºé»˜è®¤å¤„äºkÎ©æ¡£ï¼Œç„¶åæ ¹æ®ç”µå‹åˆ‡åˆ° Î©æˆ–MÎ©æ¡£
     g_ohm.st = OHM_S_SELECT_RANGE;
 
     set_range_pins(g_ohm.range);
     // LOGS("Ohm init\r\n");
 
-    // ÖØÖÃLCDË¢ĞÂµÄ¼ÆÊ±Æ÷£¬·ÀÖ¹³õÊ¼»¯Ê±Ë¢ĞÂÆÁÄ»
+    // é‡ç½®LCDåˆ·æ–°çš„è®¡æ—¶å™¨ï¼Œé˜²æ­¢åˆå§‹åŒ–æ—¶åˆ·æ–°å±å¹•
     g_lcd_buf.last_update_ms = g_volt.next_ms + VOLT_SAMPLE_PERIOD_MS;
 }
 
-// Ã¿´Îµ÷ÓÃ½öÍÆ½øÒ»²½£»ÎŞ×èÈû¡¢ÎŞ while(1)
+// æ¯æ¬¡è°ƒç”¨ä»…æ¨è¿›ä¸€æ­¥ï¼›æ— é˜»å¡ã€æ—  while(1)
 void OhmTask_Update(void)
 {   
-    // ½ÚÁ÷£ºµ½µãÔÙ²â
+    // èŠ‚æµï¼šåˆ°ç‚¹å†æµ‹
     uint32_t now = s_ms_ticks;
     if ((uint32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
     g_volt.next_ms = now;
@@ -1212,39 +1212,39 @@ void OhmTask_Update(void)
             set_range_pins(g_ohm.range);
         }
         g_ohm.vin = read_vin(AVG_N);
-        // k¦¸µµ ²âÁ¿ 510¦¸ 0.176 530¦¸ 0.181ÒÔÏÂµÄµç×è ÇĞ¦¸µµ
+        // kÎ©æ¡£ æµ‹é‡ 510Î© 0.176 530Î© 0.181ä»¥ä¸‹çš„ç”µé˜» åˆ‡Î©æ¡£
         if (g_ohm.vin<0.179f)
         {
             g_ohm.range = RANGE_OHM;
             set_range_pins(g_ohm.range);
-            // Ìø¹ıÕâÒ»´ÎË¢ĞÂLCD£¬·ÀÖ¹»»µ²Ê±¶Áµ½µÍµç×è´íÎóµØ±¨¾¯
-            // g_ohm.rx_display = 500;//±£ÁôÖµ
+            // è·³è¿‡è¿™ä¸€æ¬¡åˆ·æ–°LCDï¼Œé˜²æ­¢æ¢æŒ¡æ—¶è¯»åˆ°ä½ç”µé˜»é”™è¯¯åœ°æŠ¥è­¦
+            // g_ohm.rx_display = 500;//ä¿ç•™å€¼
             g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
         }
-        // k¦¸µµ ²âÁ¿ 51k¦¸ÒÔÉÏµÄµç×è ÇĞM¦¸µµ
+        // kÎ©æ¡£ æµ‹é‡ 51kÎ©ä»¥ä¸Šçš„ç”µé˜» åˆ‡MÎ©æ¡£
         else if (g_ohm.vin>1.817f)
         {
             g_ohm.range = RANGE_MOHM;
             set_range_pins(g_ohm.range);
         }
-        // ²âÁ¿Íê³É ÇĞµ½²âÁ¿×´Ì¬
+        // æµ‹é‡å®Œæˆ åˆ‡åˆ°æµ‹é‡çŠ¶æ€
         g_ohm.st = OHM_S_MEASURE;
     } else {
         g_ohm.vin = read_vin(AVG_N);
 
-        // ¼ÆËã Rx£¨Ô­Ê¼£©
+        // è®¡ç®— Rxï¼ˆåŸå§‹ï¼‰
         float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
                 (g_ohm.range == RANGE_KOHM) ? RS_KOHM_RAW : RS_MOHM_RAW;
         float rx_raw = compute_rx(g_ohm.vin, Rs);
         float rx = rx_raw;
 
-        // ===== ·ÖµµĞ£×¼ =====
+        // ===== åˆ†æ¡£æ ¡å‡† =====
         if (g_ohm.range == RANGE_OHM) {
             rx = rx * GAIN_OHM + OFFS_OHM;
         } else if (g_ohm.range == RANGE_KOHM) {
             rx = rx * GAIN_KOHM + OFFS_KOHM;
         } else {
-            // M¦¸ µµ°´Çø¼ä·Ö¶Î
+            // MÎ© æ¡£æŒ‰åŒºé—´åˆ†æ®µ
             if (rx_raw <= MOHM_SPLIT_OHMS) {
                 rx = rx_raw * GAIN_MOHM_LOW  + OFFS_MOHM_LOW;
             } else {
@@ -1252,13 +1252,13 @@ void OhmTask_Update(void)
             }
         }
         
-        // ³¬³ö²âÁ¿·¶Î§ Ê±»ØÈ¥Ñ¡µµ
+        // è¶…å‡ºæµ‹é‡èŒƒå›´ æ—¶å›å»é€‰æ¡£
         switch (g_ohm.range)
         {
         case RANGE_OHM:
             if (rx > 510.0f) {
                 g_ohm.st = OHM_S_SELECT_RANGE;
-                // ÖØÖÃLCDË¢ĞÂµÄ¼ÆÊ±Æ÷£¬·ÀÖ¹»»µ²Ê±Ë¢ĞÂÆÁÊ±±¨¾¯
+                // é‡ç½®LCDåˆ·æ–°çš„è®¡æ—¶å™¨ï¼Œé˜²æ­¢æ¢æŒ¡æ—¶åˆ·æ–°å±æ—¶æŠ¥è­¦
                 // g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
             }
             break;
@@ -1278,7 +1278,7 @@ void OhmTask_Update(void)
 
         if (g_ohm.st == OHM_S_SELECT_RANGE)
         {
-            // ÖØÖÃLCDË¢ĞÂµÄ¼ÆÊ±Æ÷£¬·ÀÖ¹»»µ²Ê±Ë¢ĞÂÆÁÊ±±¨¾¯
+            // é‡ç½®LCDåˆ·æ–°çš„è®¡æ—¶å™¨ï¼Œé˜²æ­¢æ¢æŒ¡æ—¶åˆ·æ–°å±æ—¶æŠ¥è­¦
             g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
         }
 
@@ -1287,7 +1287,7 @@ void OhmTask_Update(void)
 }
 
 #pragma endregion
-#pragma region ÍòÓÃ±í³õÊ¼»¯
+#pragma region ä¸‡ç”¨è¡¨åˆå§‹åŒ–
 void check_meter_mode(void)
 {
     if (GPIO_ReadDataBit(GPIOA,GPIO_Pin_2)==RESET)
@@ -1313,12 +1313,12 @@ void check_meter_mode(void)
 void MultimeterInit()
 {
     Battery_GPIO_Init();
-    ADC_Driver();// PA1 ºÍ PC4 ×÷Îª ADC ÊäÈë
+    ADC_Driver();// PA1 å’Œ PC4 ä½œä¸º ADC è¾“å…¥
 
     if (!hadSetMultiMeterMode)
     {
         LOGS("Meter IO Init");
-        // ÅäÖÃ PA2 PA3 ÊäÈëÄ£Ê½ ¸ù¾İÇé¿öÑ¡ÔñµçÁ÷±í¡¢µçÑ¹±í»òÅ·Ä·±í
+        // é…ç½® PA2 PA3 è¾“å…¥æ¨¡å¼ æ ¹æ®æƒ…å†µé€‰æ‹©ç”µæµè¡¨ã€ç”µå‹è¡¨æˆ–æ¬§å§†è¡¨
         MultiMeterIOOutputConfig(false);
         // init state: PA2 PA3 , LOW LOW mean VoltTest, LOW HIGH mean AmpTest, HIGH HIGH mean OhmTest
         check_meter_mode();
@@ -1328,7 +1328,7 @@ void MultimeterInit()
 	BuzzerInit();
 
     LCDInit();
-    // »½ĞÑ/ÖØ³õÊ¼»¯ºó£º¸´Î»¿ÕÏĞ¼ì²âÆ÷ ºÍ LCDÏÔÊ¾»º³åÇø
+    // å”¤é†’/é‡åˆå§‹åŒ–åï¼šå¤ä½ç©ºé—²æ£€æµ‹å™¨ å’Œ LCDæ˜¾ç¤ºç¼“å†²åŒº
     memset((void*)&g_idle, 0, sizeof(g_idle));
     memset((void*)&g_lcd_buf, 0, sizeof(g_lcd_buf));
 
@@ -1349,7 +1349,7 @@ void MultimeterInit()
         break;
     }
 
-    // ³õÊ¼»¯ÒÇ±í³É¹¦ÌáÊ¾Òô
+    // åˆå§‹åŒ–ä»ªè¡¨æˆåŠŸæç¤ºéŸ³
     PWM_Cmd(TIM1, ENABLE);
     delay_ms(30);
     PWM_Cmd(TIM1, DISABLE);
@@ -1357,46 +1357,46 @@ void MultimeterInit()
     hadSetMultimeterInit = true;
 }
 #pragma endregion
-#pragma region Ö÷Ñ­»·Âß¼­
+#pragma region ä¸»å¾ªç¯é€»è¾‘
 void first_init(void)
 {
-    SysTick_Init_1kHz();// ÏµÍ³Ê±ÖÓ¶¨Ê±Æ÷ us ms ¼ÆÊ±ÒÑ²âÊÔ ×¼È·
+    SysTick_Init_1kHz();// ç³»ç»Ÿæ—¶é’Ÿå®šæ—¶å™¨ us ms è®¡æ—¶å·²æµ‹è¯• å‡†ç¡®
     
-    PowerKey_GPIO_Init(); // ³¤°´¿ª¹Ø»úµÄ°´¼üÊäÈëÅäÖÃ
-    TIM2_Init_10ms();// ³¤°´Ê±¼ä¶¨Ê±Æ÷TIM2
-    PowerKey_ResetCounters();// ³¤°´Ê±¼ä¼ÆÊıÇåÁã
+    PowerKey_GPIO_Init(); // é•¿æŒ‰å¼€å…³æœºçš„æŒ‰é”®è¾“å…¥é…ç½®
+    TIM2_Init_10ms();// é•¿æŒ‰æ—¶é—´å®šæ—¶å™¨TIM2
+    PowerKey_ResetCounters();// é•¿æŒ‰æ—¶é—´è®¡æ•°æ¸…é›¶
 }
 int main (void)
 {
     first_init();
 #if ENABLE_LOG
-    // uart0_tx ´®¿ÚÈÕÖ¾ PD5 uart1_tx ´®¿ÚÈÕÖ¾ PB1
+    // uart0_tx ä¸²å£æ—¥å¿— PD5 uart1_tx ä¸²å£æ—¥å¿— PB1
     UART_Driver();
     LOGS("UART Init");
 #endif
-#if 0 // ¶ÁÈ¡¿ª»úÊ±µÄ 2V Êä³ö¶Ë µçÑ¹
+#if 0 // è¯»å–å¼€æœºæ—¶çš„ 2V è¾“å‡ºç«¯ ç”µå‹
     s32 ADC_average=0;
     ADC_InitTypeDef  ADC_InitStruct;
 	ADC_StructInit(&ADC_InitStruct);
 	ADC_InitStruct.ADC_Prescaler = 64;						 	
-	ADC_InitStruct.ADC_Mode = ADC_Mode_Single;						//µ¥´Î×ª»»Ä£Ê½
+	ADC_InitStruct.ADC_Mode = ADC_Mode_Single;						//å•æ¬¡è½¬æ¢æ¨¡å¼
 	ADC_InitStruct.ADC_TriggerSource = ADC_TriggerSource_Software;
-	ADC_InitStruct.ADC_TimerTriggerSource=ADC_TimerTriggerSource_TIM1ADC;						//¶¨Ê±Ô´´¥·¢Ñ¡ÔñTIM0ÊÂ¼ş
-	ADC_InitStruct.ADC_Align = ADC_Align_Left;					//×ó¶ÔÆë
+	ADC_InitStruct.ADC_TimerTriggerSource=ADC_TimerTriggerSource_TIM1ADC;						//å®šæ—¶æºè§¦å‘é€‰æ‹©TIM0äº‹ä»¶
+	ADC_InitStruct.ADC_Align = ADC_Align_Left;					//å·¦å¯¹é½
 	ADC_InitStruct.ADC_Channel=ADC_Channel_12;						
-	ADC_InitStruct.ADC_ReferencePositive= ADC_ReferencePositive_BG2v0;	//Ñ¡ÔñVDDA×÷ÎªÕı¶Ë²Î¿¼µçÆ½
-	ADC_InitStruct.ADC_BGVoltage=ADC_BGVoltage_BG1v0;//BGSµçÑ¹1.0v
+	ADC_InitStruct.ADC_ReferencePositive= ADC_ReferencePositive_BG2v0;	//é€‰æ‹©VDDAä½œä¸ºæ­£ç«¯å‚è€ƒç”µå¹³
+	ADC_InitStruct.ADC_BGVoltage=ADC_BGVoltage_BG1v0;//BGSç”µå‹1.0v
 	ADC_Init(ADC, &ADC_InitStruct);
-    ADC_Cmd(ADC, ENABLE);		//Æô¶¯ADCÍâÉè¹¦ÄÜ
-    while(!ADC_GetFlagStatus(ADC, ADC_FLAG_RDY));	//µÈ´ıADCÆô¶¯Íê³É
+    ADC_Cmd(ADC, ENABLE);		//å¯åŠ¨ADCå¤–è®¾åŠŸèƒ½
+    while(!ADC_GetFlagStatus(ADC, ADC_FLAG_RDY));	//ç­‰å¾…ADCå¯åŠ¨å®Œæˆ
     for(uint8_t i=0;i<100;i++)
     {
-		ADC_StartOfConversion(ADC);	//Æô¶¯×ª»»
-		while(!ADC_GetFlagStatus(ADC, ADC_FLAG_EOC));		//µÈ´ıADC×ª»»Íê³É
-		ADC_average += (s16)ADC_GetConversionValue(ADC);	//»ñÈ¡½á¹û
+		ADC_StartOfConversion(ADC);	//å¯åŠ¨è½¬æ¢
+		while(!ADC_GetFlagStatus(ADC, ADC_FLAG_EOC));		//ç­‰å¾…ADCè½¬æ¢å®Œæˆ
+		ADC_average += (s16)ADC_GetConversionValue(ADC);	//è·å–ç»“æœ
 	}
     ADC_average/=100;
-	ADC_average >>= 2;//×ó¶ÔÆë´¦Àí
+	ADC_average >>= 2;//å·¦å¯¹é½å¤„ç†
 	V_REF=((float)ADC_average)*2.0/8192;
     LOGF("V_REF:%d\r\n", (int)(V_REF*1000.0f+0.5f));
 
@@ -1414,16 +1414,16 @@ int main (void)
 #endif
 #if 0
  
-    // ²âÊÔµç×è±íÈı¸öµµÎ»µÄ»»µ²ãĞÖµ
+    // æµ‹è¯•ç”µé˜»è¡¨ä¸‰ä¸ªæ¡£ä½çš„æ¢æŒ¡é˜ˆå€¼
     MultimeterInit();
     // g_ohm.range = RANGE_KOHM;
     // set_range_pins(g_ohm.range);
 
-    // ½øÈë mA µµ
+    // è¿›å…¥ mA æ¡£
     // GPIO_SetBits(GPIOA, GPIO_Pin_2);
     // g_amp.mAflag = true;
     // g_amp.st     = AMP_S_MEASURE_mA;
-    // ÁôÔÚ A µµ
+    // ç•™åœ¨ A æ¡£
     GPIO_ResetBits(GPIOA, GPIO_Pin_2);
     g_amp.mAflag = false;
     g_amp.st     = AMP_S_MEASURE_A;
@@ -1431,15 +1431,15 @@ int main (void)
     {
         delay_ms(300);
         // continue;
-        // ¶ÁÈ¡µçÑ¹
+        // è¯»å–ç”µå‹
         // g_ohm.vin = read_vin(AVG_N);
 
-        // ¼ÆËã Rx
+        // è®¡ç®— Rx
         // float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
         //            (g_ohm.range == RANGE_KOHM) ? RS_KOHM_RAW : RS_MOHM_RAW;
         // float rx = compute_rx(g_ohm.vin, Rs);
         
-        // ·ÖµµĞ£×¼
+        // åˆ†æ¡£æ ¡å‡†
         // if (g_ohm.range == RANGE_OHM)   rx = rx * GAIN_OHM  + OFFS_OHM;
         // if (g_ohm.range == RANGE_KOHM)  rx = rx * GAIN_KOHM + OFFS_KOHM;
         // if (g_ohm.range == RANGE_MOHM)  rx = rx * GAIN_MOHM + OFFS_MOHM;
@@ -1452,19 +1452,19 @@ int main (void)
             g_amp.iamp = V_DV(g_amp.vin) / GAIN_mA * MA_SLOPE_FIX;
         }else if (g_amp.st == AMP_S_MEASURE_A)
         {
-            g_amp.iamp = (g_amp.vin - 0.99f) / 3.33f * 10.0f; // A·Å´óÁË4±¶
-            g_amp.iamp = current_compensate(g_amp.iamp);  // ¡ï Îó²î²¹³¥
+            g_amp.iamp = (g_amp.vin - 0.99f) / 3.33f * 10.0f; // Aæ”¾å¤§äº†4å€
+            g_amp.iamp = current_compensate(g_amp.iamp);  // â˜… è¯¯å·®è¡¥å¿
         }
         
-        BatteryTask_Update();     // ¡ï Ã¿Ãë´òÓ¡Ò»´Îµç³ØµçÁ¿
+        BatteryTask_Update();     // â˜… æ¯ç§’æ‰“å°ä¸€æ¬¡ç”µæ± ç”µé‡
         // g_lcd_buf.num4 = (uint16_t)(g_ohm.vin*1000.0f+0.5f);
-        // ¸üĞÂËÄÎ»Êı×ÖºÍĞ¡ÊıµãÎ»ÖÃ
+        // æ›´æ–°å››ä½æ•°å­—å’Œå°æ•°ç‚¹ä½ç½®
         // LCD_Show_digits(g_lcd_buf.num4, g_lcd_buf.dotpos);
         LCD_DISPLAY_UPDATE();
         LOGF("g_amp.vin:%d g_amp.iamp:%d \r\n", (int)(g_amp.vin*1000.0f+0.5f), (int)(g_amp.iamp*1000.0f+0.5f));
     }
 #endif
-    deep_sleep();//·½±ã²âÊÔ¹Ø±ÕË¯Ãß
+    deep_sleep();//æ–¹ä¾¿æµ‹è¯•å…³é—­ç¡çœ 
     for (;;)
     {
         if (g_run_mode == RUN_MODE_NORMALWORK)
@@ -1487,9 +1487,9 @@ int main (void)
             default:
                 break;
             }
-            BatteryTask_Update();     // ¡ï Ã¿Ãë´òÓ¡Ò»´Îµç³ØµçÁ¿
+            BatteryTask_Update();     // â˜… æ¯ç§’æ‰“å°ä¸€æ¬¡ç”µæ± ç”µé‡
             LCD_DISPLAY_UPDATE();
-            if (poweroff_request && !g_require_release_before_poweroff)//ÒªÇó³¤°´ËÉÊÖºó²Å¹Ø»ú
+            if (poweroff_request && !g_require_release_before_poweroff)//è¦æ±‚é•¿æŒ‰æ¾æ‰‹åæ‰å…³æœº
             {
                 LOGS("wait to poweroff");
                 deep_sleep();
@@ -1498,15 +1498,15 @@ int main (void)
         else if (g_run_mode == RUN_MODE_DEEPSLEEP)
         {
             if (!g_require_release_before_poweroff) {
-                poweroff_request = 1;                     // Ö»ÔÚÒÑËÉÊÖ¹ıºó²ÅÔÊĞí¹Ø»ú
+                poweroff_request = 1;                     // åªåœ¨å·²æ¾æ‰‹è¿‡åæ‰å…è®¸å…³æœº
                 s_lock_until_release = 1;
             }
         }
         else if (g_run_mode == RUN_MODE_WAKEUP)
         {
             g_run_mode = RUN_MODE_NORMALWORK;
-            s_lock_until_release = 1;                     // ÈÔĞèµÈËÉÊÖ
-            g_require_release_before_poweroff = 1;        // ¡ï ½øÈë¹¤×÷Ì¬ºó±ØĞëÏÈËÉÊÖÒ»´Î
+            s_lock_until_release = 1;                     // ä»éœ€ç­‰æ¾æ‰‹
+            g_require_release_before_poweroff = 1;        // â˜… è¿›å…¥å·¥ä½œæ€åå¿…é¡»å…ˆæ¾æ‰‹ä¸€æ¬¡
         }
     }
 }

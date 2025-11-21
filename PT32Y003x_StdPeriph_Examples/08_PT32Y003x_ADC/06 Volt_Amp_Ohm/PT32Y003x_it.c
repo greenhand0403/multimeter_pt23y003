@@ -1,6 +1,6 @@
 /******************************************************************************
   * @file    PT32Y003x_it.c
-  * @author  Ó¦ÓÃ¿ª·¢ÍÅ¶Ó
+  * @author  åº”ç”¨å¼€å‘å›¢é˜Ÿ
   * @version V1.6.0
   * @date    2023/12/18
   * @brief    This file provides all interrupt service routine.
@@ -28,11 +28,11 @@
 /* Private function prototypes -----------------------------------------------------------------------------*/
 /* Private functions ---------------------------------------------------------------------------------------*/
 
-extern volatile uint32_t s_ms_ticks;   // 1ms ¼ÆÊı£¨È«¾Ö£©
-extern volatile uint32_t s_ms_delay;   // ×èÈûÊ½ ms ÑÓÊ±ÓÃ
-// SysTick ÖĞ¶Ï£º1ms ĞÄÌø + ×èÈûÑÓÊ±µİ¼õ
+extern volatile uint32_t s_ms_ticks;   // 1ms è®¡æ•°ï¼ˆå…¨å±€ï¼‰
+extern volatile uint32_t s_ms_delay;   // é˜»å¡å¼ ms å»¶æ—¶ç”¨
+// SysTick ä¸­æ–­ï¼š1ms å¿ƒè·³ + é˜»å¡å»¶æ—¶é€’å‡
 /**
-* @brief SysTickÖĞ¶Ï·şÎñº¯Êı
+* @brief SysTickä¸­æ–­æœåŠ¡å‡½æ•°
 * @param None
 * @retval None
 */
@@ -43,7 +43,7 @@ void SysTick_Handler(void)
 }
 
 /**
-* @brief PCÖĞ¶Ï·şÎñº¯Êı
+* @brief PCä¸­æ–­æœåŠ¡å‡½æ•°
 * @param None
 * @retval None
 */
@@ -53,7 +53,7 @@ void EXTIC_Handler(void)
 }
 
 /**
-* @brief TIMER1ÖĞ¶Ï·şÎñº¯Êı
+* @brief TIMER1ä¸­æ–­æœåŠ¡å‡½æ•°
 * @param None
 * @retval None
 */
@@ -63,22 +63,22 @@ void TIM1_Handler(void)
 }
 
 /**
-* @brief TIMER2ÖĞ¶Ï·şÎñº¯Êı
+* @brief TIMER2ä¸­æ–­æœåŠ¡å‡½æ•°
 * @param None
 * @retval None
 */
 extern const uint32_t PWR_DEBOUNCE_MS;
 extern const uint32_t PWR_LONGPRESS_MS;
 extern const uint32_t POSTWAKE_LONGPRESS_TIMEOUT;
-// ÓÉ TIM2 Ã¿ 10ms É¨ÃèÓÃµ½µÄ¼ÆÊı
+// ç”± TIM2 æ¯ 10ms æ‰«æç”¨åˆ°çš„è®¡æ•°
 extern volatile uint16_t s_pwr_stable_ticks;
 extern volatile uint16_t s_pwr_press_ticks;
-extern volatile uint8_t  s_pwr_last_sample;   // 1=Î´°´, 0=°´ÏÂ
-extern volatile uint8_t  poweroff_request;   // ÖÃ 1 ºóÔÚ°²È«µã deep_sleep()
-// ÔËĞĞÄ£Ê½£º¹¤×÷Ì¬ »½ĞÑÌ¬ µÈ´ıÌ¬
+extern volatile uint8_t  s_pwr_last_sample;   // 1=æœªæŒ‰, 0=æŒ‰ä¸‹
+extern volatile uint8_t  poweroff_request;   // ç½® 1 ååœ¨å®‰å…¨ç‚¹ deep_sleep()
+// è¿è¡Œæ¨¡å¼ï¼šå·¥ä½œæ€ å”¤é†’æ€ ç­‰å¾…æ€
 typedef enum { RUN_MODE_NORMALWORK = 0, RUN_MODE_DEEPSLEEP = 1, RUN_MODE_WAKEUP = 2} run_mode_t;
 extern run_mode_t g_run_mode;
-// È«¾Ö£¨»ò¾²Ì¬£©¼ÓÒ»¸öËø
+// å…¨å±€ï¼ˆæˆ–é™æ€ï¼‰åŠ ä¸€ä¸ªé”
 uint8_t s_lock_until_release = 0;
 void TIM2_Handler(void)
 {
@@ -103,19 +103,19 @@ void TIM2_Handler(void)
     }
 
     uint8_t pressed_stable = (s_pwr_last_sample == 0) && (s_pwr_stable_ticks >= DEBOUNCE_TICKS);
-    // 2) ¡°µÈËÉÊÖËø¡±Âß¼­
+    // 2) â€œç­‰æ¾æ‰‹é”â€é€»è¾‘
     if (s_lock_until_release) {
         if (pressed_stable) {
-            // »¹Ã»ËÉ£¬¼ÌĞøºöÂÔ
+            // è¿˜æ²¡æ¾ï¼Œç»§ç»­å¿½ç•¥
             return;
         } else {
-            // ÒÑ¾­ÎÈ¶¨ËÉÊÖ -> ½âËø£¬²¢ÇåÁã¼ÆÊı
+            // å·²ç»ç¨³å®šæ¾æ‰‹ -> è§£é”ï¼Œå¹¶æ¸…é›¶è®¡æ•°
             s_lock_until_release = 0;
             s_pwr_press_ticks = 0;
             return;
         }
     }
-    // 3) Õı³£³¤°´¼ÆÊ±
+    // 3) æ­£å¸¸é•¿æŒ‰è®¡æ—¶
     if (pressed_stable) {
       if (s_pwr_press_ticks < LONGPRESS_TICKS) s_pwr_press_ticks++;
     } else {
@@ -123,30 +123,30 @@ void TIM2_Handler(void)
     }
 
     
-    // ÎÈ¶¨°´ÏÂ
+    // ç¨³å®šæŒ‰ä¸‹
     if (s_pwr_press_ticks >= LONGPRESS_TICKS)
     {
       s_pwr_press_ticks = 0;
       if (g_run_mode == RUN_MODE_NORMALWORK)
       {
         poweroff_request = 1;
-        // ¹¤×÷Ì¬³¤°´½øÈëĞİÃß
+        // å·¥ä½œæ€é•¿æŒ‰è¿›å…¥ä¼‘çœ 
         // g_run_mode = RUN_MODE_DEEPSLEEP;
       }
       else// if (g_run_mode == RUN_MODE_DEEPSLEEP)
       {
-          // ĞİÃßÌ¬³¤°´½øÈë¹¤×÷Ì¬
+          // ä¼‘çœ æ€é•¿æŒ‰è¿›å…¥å·¥ä½œæ€
           g_run_mode = RUN_MODE_NORMALWORK;
       }
       s_lock_until_release = 1;
     }
 
-    // ¡ï ÈôÄãÓĞ¡°Ã¿Ãë¼ÆÊı/×´Ì¬Í³¼Æ¡±Ïë¹Ò TIM2£¬Ò²¿ÉÔÚ´Ë´¦ÓÃ¾²Ì¬·ÖÆµ¼ÆËã 1s
+    // â˜… è‹¥ä½ æœ‰â€œæ¯ç§’è®¡æ•°/çŠ¶æ€ç»Ÿè®¡â€æƒ³æŒ‚ TIM2ï¼Œä¹Ÿå¯åœ¨æ­¤å¤„ç”¨é™æ€åˆ†é¢‘è®¡ç®— 1s
   }
 }
 
 /**
-* @brief TIMER3ÖĞ¶Ï·şÎñº¯Êı
+* @brief TIMER3ä¸­æ–­æœåŠ¡å‡½æ•°
 * @param None
 * @retval None
 */
@@ -155,14 +155,14 @@ void TIM3_Handler(void)
 }
 
 /**
-* @brief TIMER4ÖĞ¶Ï·şÎñº¯Êı
+* @brief TIMER4ä¸­æ–­æœåŠ¡å‡½æ•°
 * @param None
 * @retval None
 */
 // extern uint32_t mcu_sleep_count;
 void TIM4_Handler(void)
 {
-  // 120Ãë×Ô¶¯ĞİÃß ÆúÓÃ ¸ÄÓÃsystick¼ÇÂ¼120sĞİÃßÁË
+  // 120ç§’è‡ªåŠ¨ä¼‘çœ  å¼ƒç”¨ æ”¹ç”¨systickè®°å½•120sä¼‘çœ äº†
   // TIM_ClearFlag(TIM4, TIM_FLAG_ARF);
   // mcu_sleep_count += 5;
 }
