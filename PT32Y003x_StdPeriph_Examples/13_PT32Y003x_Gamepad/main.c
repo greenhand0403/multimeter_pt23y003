@@ -227,8 +227,8 @@ void UART1_Config(void)
     uart.UART_BaudRate = DEBUG_BAUD;
     uart.UART_WordLengthAndParity = UART_WordLengthAndParity_8D;
     uart.UART_StopBitLength = UART_StopBitLength_1;
-    uart.UART_ParityMode = UART_ParityMode_Odd;
-    // uart.UART_Receiver = UART_Receiver_Enable;
+    uart.UART_ParityMode = UART_ParityMode_Even;
+    uart.UART_Receiver = UART_Receiver_Disable;
     uart.UART_LoopbackMode = UART_LoopbackMode_Disable;
 
     UART_Cmd(UART1, ENABLE);
