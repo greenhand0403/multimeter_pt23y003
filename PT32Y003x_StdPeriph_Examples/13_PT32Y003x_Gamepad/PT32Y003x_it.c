@@ -1,5 +1,6 @@
 #include "PT32Y003x.h"
 #include "PT32Y003x_uart.h"
+#include <PT32Y003x_gpio.h>
 
 // ===== 外部变量声明 =====
 extern u8 rx_buffer[64];
@@ -90,4 +91,21 @@ void SysTick_Handler(void)
   s_ms_ticks++;
   if (s_ms_delay!= 0x00) 
     s_ms_delay--;
+}
+
+// 当任意按键按下时唤醒
+void EXTIA_Handler(void)
+{
+    // 清除中断标志
+    EXTI_ClearFlag(EXTIA, GPIO_Pin_1);
+    EXTI_ClearFlag(EXTIA, GPIO_Pin_2);
+}
+
+void EXTIC_Handler(void)
+{
+    // 清除中断标志
+    EXTI_ClearFlag(EXTIC, GPIO_Pin_3);
+    EXTI_ClearFlag(EXTIC, GPIO_Pin_4);
+    EXTI_ClearFlag(EXTIC, GPIO_Pin_5);
+    EXTI_ClearFlag(EXTIC, GPIO_Pin_6);
 }

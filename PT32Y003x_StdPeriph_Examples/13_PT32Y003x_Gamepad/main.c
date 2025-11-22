@@ -1,330 +1,222 @@
-#include "PT32Y003x.h"
-#include "PT32Y003x_gpio.h"
-#include "PT32Y003x_uart.h"
-#include "PT32Y003x_nvic.h"
-#include "PT32Y003x_i2c.h"
-#include "PT32Y003x_tim.h"
-#include <stdio.h>
-#include <PT32Y003x_rcc.h>
-#include <stdarg.h>
-#include "delay.h"
-
-#pragma region 宏和全局变量
-// ===== 按键定义 =====
-#define KEY_UP      GPIO_ReadDataBit(GPIOA, GPIO_Pin_1)   // PA1
-#define KEY_LEFT    GPIO_ReadDataBit(GPIOA, GPIO_Pin_2)   // PA2
-#define KEY_DOWN    GPIO_ReadDataBit(GPIOC, GPIO_Pin_3)   // PC3
-#define KEY_RIGHT   GPIO_ReadDataBit(GPIOC, GPIO_Pin_4)   // PC4
-#define KEY_A       GPIO_ReadDataBit(GPIOC, GPIO_Pin_5)   // PC5
-#define KEY_B       GPIO_ReadDataBit(GPIOC, GPIO_Pin_6)   // PC6
-
-// 按键有效电平：低电平有效（0 = pressed）
-#define KEY_PRESSED 0
-
-// ===== 蓝牙模块配置 =====
-#define BLUETOOTH_BAUD 115200
-// ===== 调试串口配置 =====
-#define DEBUG_BAUD 115200
-
-// ===== 蓝牙消息包格式：一共四字节，中间是数据和校验和 =====
-#define PACKET_HEADER   0xAA
-#define PACKET_TAIL     0x55
+#include "system_config.h"
+#include <PT32Y003x_pwr.h>
+#include <PT32Y003x_exti.h>
+// 头文件的添加在keil里面设置了，自动搜索头文件
 
 // ===== 全局变量 =====
-u8 last_key_state = 0;
-u8 current_key_state = 0;
+volatile uint8_t g_current_key_state = 0;
+volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
+extern volatile bluetooth_state_t g_bt_state;
+volatile uint8_t g_seq_num = 0;
+volatile uint32_t g_last_packet_time = 0;
 
-// ===== 蓝牙模块状态 =====
-// 给中断服务函数用，标志蓝牙模块是否初始化完成
-u8 bluetooth_ready = 0;
+// ===== 外部函数声明 =====
+extern void led_init(void);
+extern void led_set_blink_fast(void);  // 只保留快闪
+extern void led_set_on(void);
+extern void led_set_off(void);
+extern void led_update(void);
 
-// ===== UART接收缓冲区 =====
-// 给中断服务函数用，用于存储从蓝牙模块接收的数据
-u8 rx_buffer[64];
-u16 rx_index = 0;
-#pragma endregion
+extern void button_init(void);
+extern uint8_t button_get_state(void);
+extern void button_check_wakeup(void);
 
-#pragma region 函数声明
-// ===== 函数声明 =====
+extern void servo_init(void);
+extern void servo_set_angle(uint8_t angle);
 
-void GPIO_Config(void);
-void UART0_Config(void);
-void UART1_Config(void);
-void I2C0_Config(void);
-void Servo_Config(void);
-void Timer_Config(void);
-void Bluetooth_Init(void);
-void SendKeyStatePacket(void);
-void SendDebugInfo(void);
+extern void bluetooth_init(void);
+extern void bluetooth_send_packet(protocol_packet_t* packet);
+extern void bluetooth_check_connection(void);
+extern uint8_t bluetooth_check_sleep_timeout(void);
+extern void bluetooth_configure_name(void);
 
-u8 CalculateChecksum(u8* data, u8 len);
-#pragma endregion
+extern void gyro_init(void);
 
-#pragma region 串口格式化输出辅助函数
-// 向指定UART发送字符串
-void UART_SendString(UART_TypeDef* UARTx, const char *str)
+// ===== 模式检测函数 =====
+work_mode_t detect_work_mode(void)
 {
-    while (*str) {
-        UART_SendData(UARTx, *str);
-        while (UART_GetFlagStatus(UARTx, UART_FLAG_TXE) == RESET);
-        str++;
+    GPIO_InitTypeDef gpio;
+    
+    // 配置PA3为输入上拉
+    gpio.GPIO_Pin = GPIO_Pin_3;
+    gpio.GPIO_Mode = GPIO_Mode_In;
+    gpio.GPIO_Pull = GPIO_Pull_Up;
+    GPIO_Init(GPIOA, &gpio);
+    
+    delay_ms(10);
+    
+    if (GPIO_ReadDataBit(GPIOA, GPIO_Pin_3) == 1) {
+        return WORK_MODE_1_SERVO;  // 悬空 - 模式1
+    } else {
+        return WORK_MODE_2_GYRO;   // 接地 - 模式2
     }
 }
-// 核心的格式化输出函数（支持基本格式）
-void UART_Printf(const char *format, ...)
-{
-    char buffer[128];
-    va_list args;
-    
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
 
-    UART_SendString(UART0, buffer);
-    UART_SendString(UART1, buffer);
-}
-
-// 专门输出到UART0（蓝牙）
-void Bluetooth_Printf(const char *format, ...)
-{
-    char buffer[128];
-    va_list args;
-    
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-    
-    UART_SendString(UART0, buffer);
-}
-
-// 专门输出到UART1（调试）
-void Debug_Printf(const char *format, ...)
-{
-    char buffer[128];
-    va_list args;
-    
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-    
-    UART_SendString(UART1, buffer);
-}
-#pragma endregion
-
-#pragma region 主函数
-// ===== 主函数 =====
-int main(void)
+// ===== 初始化所有模块 =====
+void system_init(void)
 {
     SysTick_Init();
     
-    // 初始化所有外设
-    GPIO_Config();
-    UART0_Config();
-    UART1_Config();
-    // 预留 陀螺仪初始化
-    // I2C0_Config();
-    // 预留 舵机初始化
-    // Servo_Config();
-    // Timer_Config();
+    // 检测工作模式
+    g_work_mode = detect_work_mode();
     
-    UART_Printf("UART0 UART1 OK\r\n");
+    // 初始化各模块
+    led_init();
+    button_init();
+    bluetooth_init();
     
-    // 初始化蓝牙模块
-    Bluetooth_Init();
+    // 根据模式初始化相应模块
+    if (g_work_mode == WORK_MODE_1_SERVO) {
+        servo_init();
+    } else if (g_work_mode == WORK_MODE_2_GYRO) {
+        gyro_init();
+    }
+}
+
+// ===== 发送连接状态包 =====
+void send_connect_packet(void)
+{
+    protocol_packet_t packet;
     
-    UART_Printf("BT Init OK\r\n");
+    packet.header_h = PROTOCOL_HEADER_H;
+    packet.header_l = PROTOCOL_HEADER_L;
+    packet.cmd_type = CMD_TYPE_CONNECT;
+    
+    // MAC地址后2字节（实际应从蓝牙模块读取）
+    packet.data[0] = 0xAA;
+    packet.data[1] = 0xBB;
+    packet.data[2] = 0x00;
+    packet.data[3] = 0x00;
+    packet.data[4] = 0x00;
+    packet.data[5] = 0x00;
+    
+    packet.seq_num = g_seq_num++;
+    
+    uint16_t crc = packet.cmd_type + (packet.data[0] + packet.data[1] + 
+                packet.data[2] + packet.data[3] + packet.data[4] + 
+                packet.data[5]) + packet.seq_num;
+    packet.crc_high = (uint8_t)(crc >> 8);
+    packet.crc_low = (uint8_t)(crc & 0xFF);
+    
+    packet.tail_h = PROTOCOL_TAIL_H;
+    packet.tail_l = PROTOCOL_TAIL_L;
+    
+    bluetooth_send_packet(&packet);
+}
+
+// ===== 发送按键状态包 =====
+void send_key_status_packet(void)
+{
+    protocol_packet_t packet;
+    
+    packet.header_h = PROTOCOL_HEADER_H;
+    packet.header_l = PROTOCOL_HEADER_L;
+    packet.cmd_type = CMD_TYPE_STATUS;
+    
+    packet.data[0] = g_current_key_state;
+    packet.data[1] = 0x00;
+    packet.data[2] = 0x00;
+    // 陀螺仪数据（模式2时使用）
+    packet.data[3] = 0x5A;
+    packet.data[4] = 0x5A;
+    packet.data[5] = 0x5A;
+    
+    packet.seq_num = g_seq_num++;
+    
+    uint16_t crc = packet.cmd_type + (packet.data[0] + packet.data[1] + 
+                packet.data[2] + packet.data[3] + packet.data[4] + 
+                packet.data[5]) + packet.seq_num;
+    packet.crc_high = (uint8_t)(crc >> 8);
+    packet.crc_low = (uint8_t)(crc & 0xFF);
+    
+    packet.tail_h = PROTOCOL_TAIL_H;
+    packet.tail_l = PROTOCOL_TAIL_L;
+    
+    bluetooth_send_packet(&packet);
+}
+
+// ===== 休眠功能 =====
+void enter_sleep_mode(void)
+{
+    led_set_off();
+    
+    // 配置任意按键唤醒
+    EXTI_TriggerTypeConfig(EXTIA, GPIO_Pin_1, EXTI_Trigger_RisingFalling);
+    EXTI_TriggerTypeConfig(EXTIA, GPIO_Pin_2, EXTI_Trigger_RisingFalling);
+    EXTI_TriggerTypeConfig(EXTIC, GPIO_Pin_3, EXTI_Trigger_RisingFalling);
+    EXTI_TriggerTypeConfig(EXTIC, GPIO_Pin_4, EXTI_Trigger_RisingFalling);
+    EXTI_TriggerTypeConfig(EXTIC, GPIO_Pin_5, EXTI_Trigger_RisingFalling);
+    EXTI_TriggerTypeConfig(EXTIC, GPIO_Pin_6, EXTI_Trigger_RisingFalling);
+    
+    EXTI_ITConfig(EXTIA, GPIO_Pin_1, ENABLE);
+    EXTI_ITConfig(EXTIA, GPIO_Pin_2, ENABLE);
+    EXTI_ITConfig(EXTIC, GPIO_Pin_3, ENABLE);
+    EXTI_ITConfig(EXTIC, GPIO_Pin_4, ENABLE);
+    EXTI_ITConfig(EXTIC, GPIO_Pin_5, ENABLE);
+    EXTI_ITConfig(EXTIC, GPIO_Pin_6, ENABLE);
+    
+    NVIC_InitTypeDef nvic;
+    nvic.NVIC_IRQChannel = EXTIA_IRQn;
+    nvic.NVIC_IRQChannelCmd = ENABLE;
+    nvic.NVIC_IRQChannelPriority = 0x00;
+    NVIC_Init(&nvic);
+    
+    nvic.NVIC_IRQChannel = EXTIC_IRQn;
+    nvic.NVIC_IRQChannelCmd = ENABLE;
+    nvic.NVIC_IRQChannelPriority = 0x00;
+    NVIC_Init(&nvic);
+    
+    PWR_EnterDeepSleepMode(PWR_DeepSleepEntry_WFI);
+}
+
+// ===== 主函数 =====
+int main(void)
+{
+    system_init();
+    
+    // 配置蓝牙名称
+    bluetooth_configure_name();
+    
+    // 发送连接确认包
+    send_connect_packet();
     
     while (1)
     {
-        // 读取当前按键状态
-        current_key_state = 0;
-        if (KEY_UP == KEY_PRESSED)      current_key_state |= 0x01;
-        if (KEY_LEFT == KEY_PRESSED)    current_key_state |= 0x02;
-        if (KEY_DOWN == KEY_PRESSED)    current_key_state |= 0x04;
-        if (KEY_RIGHT == KEY_PRESSED)   current_key_state |= 0x08;
-        if (KEY_A == KEY_PRESSED)       current_key_state |= 0x10;
-        if (KEY_B == KEY_PRESSED)       current_key_state |= 0x20;
+        bluetooth_check_connection();
         
-        // 检测按键状态变化
-        if (current_key_state != last_key_state)
-        {
-            SendKeyStatePacket();
-            SendDebugInfo();
-            last_key_state = current_key_state;
+        // LED控制：严格按照设计文档
+        if (g_bt_state == BT_STATE_CONNECTED) {
+            led_set_on();      // 连接后常亮
+        } else {
+            led_set_blink_fast();  // 断开后快闪（唯一闪烁模式）
         }
         
-        delay_ms(100); // 防抖延时
+        // 获取按键状态
+        uint8_t new_key_state = button_get_state();
+        
+        // 数据发送逻辑
+        uint32_t current_time = s_ms_ticks;
+        if ((new_key_state != g_current_key_state) || 
+            (g_work_mode == WORK_MODE_2_GYRO && 
+             (current_time - g_last_packet_time) >= PACKET_SEND_INTERVAL_MS)) {
+            
+            g_current_key_state = new_key_state;
+            g_last_packet_time = current_time;
+            
+            if (g_bt_state == BT_STATE_CONNECTED) {
+                send_key_status_packet();
+            }
+        }
+        
+        led_update();
+        
+        // 检查休眠超时
+        if (bluetooth_check_sleep_timeout()) {
+            enter_sleep_mode();
+        }
+        
+        delay_ms(1);
     }
-}
-
-// ===== GPIO初始化 =====
-void GPIO_Config(void)
-{
-    GPIO_InitTypeDef gpio;
-    
-    // 配置按键输入（PA1, PA2, PC3, PC4, PC5, PC6）- 上拉输入
-    gpio.GPIO_Pin = GPIO_Pin_1 | GPIO_Pin_2;
-    gpio.GPIO_Mode = GPIO_Mode_In;
-    gpio.GPIO_Pull = GPIO_Pull_Up;
-    GPIO_Init(GPIOA, &gpio);
-    
-    gpio.GPIO_Pin = GPIO_Pin_3 | GPIO_Pin_4 | GPIO_Pin_5 | GPIO_Pin_6;
-    gpio.GPIO_Mode = GPIO_Mode_In;
-    gpio.GPIO_Pull = GPIO_Pull_Up;
-    GPIO_Init(GPIOC, &gpio);
-    
-    /* 配置 PD5 (TX0) 为 AF 推挽输出，PD6 (RX0) 为输入浮空或上拉 */
-    GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_5, AFIO_AF_0,ENABLE);	//PD5 TX0
-    GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_6, AFIO_AF_0,ENABLE);	//PD6 RX0
-
-    /* UART1 remap -> PB1 TX1 */
-    GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_1, AFIO_AF_1,ENABLE);	//PB1 TX1
-    
-    // 配置I2C0引脚（PB4=SCL, PB5=SDA）
-    GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_4, AFIO_AF_0, ENABLE); // PB4 = SCL
-    GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_5, AFIO_AF_0, ENABLE); // PB5 = SDA
-    
-    // 配置舵机引脚（PA3）
-    gpio.GPIO_Pin = GPIO_Pin_3;
-    gpio.GPIO_Mode = GPIO_Mode_OutPP;
-    // gpio.GPIO_Pull = GPIO_Pull_NoPull;
-    GPIO_Init(GPIOA, &gpio);
-    GPIO_ResetBits(GPIOA, GPIO_Pin_3); // 默认低电平
-}
-
-// ===== UART0配置（蓝牙通信）=====
-void UART0_Config(void)
-{
-    UART_InitTypeDef uart;
-    NVIC_InitTypeDef nvic;
-    
-    // NVIC配置
-    nvic.NVIC_IRQChannel = UART0_IRQn;
-    nvic.NVIC_IRQChannelCmd = ENABLE;
-    nvic.NVIC_IRQChannelPriority = 0x01;
-    NVIC_Init(&nvic);
-
-    // 使能接收中断
-    UART_ITConfig(UART0, UART_IT_RXNEI, ENABLE);
-    
-    // UART0配置
-    uart.UART_BaudRate = BLUETOOTH_BAUD;
-    uart.UART_WordLengthAndParity = UART_WordLengthAndParity_8D;
-    uart.UART_StopBitLength = UART_StopBitLength_1;
-    uart.UART_ParityMode = UART_ParityMode_Odd;
-    uart.UART_Receiver = UART_Receiver_Enable;
-    uart.UART_LoopbackMode = UART_LoopbackMode_Disable;
-    
-    UART_Cmd(UART0, ENABLE);
-	UART_Init(UART0, &uart);
-}
-
-// ===== UART1配置（调试输出）=====
-void UART1_Config(void)
-{
-    UART_InitTypeDef uart;
-    
-    uart.UART_BaudRate = DEBUG_BAUD;
-    uart.UART_WordLengthAndParity = UART_WordLengthAndParity_8D;
-    uart.UART_StopBitLength = UART_StopBitLength_1;
-    uart.UART_ParityMode = UART_ParityMode_Even;
-    uart.UART_Receiver = UART_Receiver_Disable;
-    uart.UART_LoopbackMode = UART_LoopbackMode_Disable;
-
-    UART_Cmd(UART1, ENABLE);
-    UART_Init(UART1, &uart);
-}
-
-// ===== I2C0配置（预留MPU6050）=====
-void I2C0_Config(void)
-{
-    I2C_InitTypeDef i2c;
-    
-    i2c.I2C_Acknowledge = I2C_Acknowledge_Enable;
-    i2c.I2C_Broadcast = I2C_Broadcast_Disable;
-    i2c.I2C_OwnAddress = 0x00;
-    i2c.I2C_Prescaler = 479; // 假设PCLK=48MHz, SCL≈100kHz
-    I2C_Init(I2C0, &i2c);
-    I2C_Cmd(I2C0, ENABLE);
-}
-
-// ===== 舵机配置（PA3）=====
-void Servo_Config(void)
-{
-    // 预留：配置PA3为PWM输出控制SG90
-    // 需要使用定时器输出50Hz PWM信号
-    // 这里先配置为普通GPIO
-    GPIO_InitTypeDef gpio;
-    gpio.GPIO_Pin = GPIO_Pin_3;
-    gpio.GPIO_Mode = GPIO_Mode_OutPP;
-    GPIO_Init(GPIOA, &gpio);
-    GPIO_SetBits(GPIOA, GPIO_Pin_3);
-}
-
-// ===== 定时器配置（预留PWM）=====
-void Timer_Config(void)
-{
-    // 预留：用于舵机PWM或其他定时任务
-
-    // 这里可以配置TIMER1或TIMER2
-}
-
-// ===== 蓝牙模块初始化 =====
-void Bluetooth_Init(void)
-{
-    // 只发给蓝牙，查询波特率
-    Bluetooth_Printf("AT+QT\r\n"); // 查询波特率
-    // 只发给 UART1 调试
-    Debug_Printf("DEBUG UART1\r\n");
-    // 延长1秒测试
-    delay_ms(1000);
-    UART_Printf("All OK\r\n");
-}
-
-// ===== 发送按键状态数据包（标准4字节格式）=====
-void SendKeyStatePacket(void)
-{
-    u8 packet[4]; // 头部 + 数据 + 校验 + 尾部
-    
-    packet[0] = PACKET_HEADER;      // 包头
-    packet[1] = current_key_state;  // 按键状态（低6位）
-    packet[2] = CalculateChecksum(&packet[0], 2); // 校验和
-    packet[3] = PACKET_TAIL;        // 包尾
-    
-    // 发送整个数据包
-    for (int i = 0; i < 4; i++)
-    {
-        UART_SendData(UART0, packet[i]);
-        while (UART_GetFlagStatus(UART0, UART_FLAG_TXE) == RESET); // 等待发送完成
-    }
-    
-    Debug_Printf("Sent key packet: %02X %02X %02X %02X\r\n", 
-           packet[0], packet[1], packet[2], packet[3]);
-}
-
-// ===== 计算校验和 =====
-u8 CalculateChecksum(u8* data, u8 len)
-{
-    u8 sum = 0;
-    for (u8 i = 0; i < len; i++)
-    {
-        sum += data[i];
-    }
-    return sum;
-}
-
-// ===== 只发送调试信息到UART1 =====
-void SendDebugInfo(void)
-{
-    Debug_Printf("Key State: 0x%02X -> ", current_key_state);
-    
-    if (current_key_state & 0x01) Debug_Printf("UP ");
-    if (current_key_state & 0x02) Debug_Printf("LEFT ");
-    if (current_key_state & 0x04) Debug_Printf("DOWN ");
-    if (current_key_state & 0x08) Debug_Printf("RIGHT ");
-    if (current_key_state & 0x10) Debug_Printf("A ");
-    if (current_key_state & 0x20) Debug_Printf("B ");
-    Debug_Printf("\r\n");
 }
 
 #ifdef  USE_FULL_ASSERT
