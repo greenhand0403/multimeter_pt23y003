@@ -5,15 +5,15 @@ void led_init(void)
 {
     GPIO_InitTypeDef gpio;
     
-    gpio.GPIO_Pin = GPIO_Pin_0;  // PB0
+    gpio.GPIO_Pin = GPIO_Pin_4;  // PD4
     gpio.GPIO_Mode = GPIO_Mode_OutPP;
     gpio.GPIO_Pull = GPIO_Pull_NoPull;
-    GPIO_Init(GPIOB, &gpio);
+    GPIO_Init(GPIOD, &gpio);
     
     // ≥ı ºπÿ±’LED
-    GPIO_ResetBits(LED_PIN);
-    led_state = 0;
-    blink_mode = 0;
+    // GPIO_ResetBits(LED_PIN);
+    // led_state = 0;
+    // blink_mode = 0;
 }
 
 // ===== …Ë÷√LED◊¥Ã¨ =====

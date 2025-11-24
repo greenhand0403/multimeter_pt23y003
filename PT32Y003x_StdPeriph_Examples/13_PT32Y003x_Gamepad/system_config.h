@@ -80,6 +80,7 @@ typedef enum {
 // ===== 全局变量声明 =====
 extern volatile uint8_t g_current_key_state;
 extern volatile work_mode_t g_work_mode;
+// 蓝牙状态连接与否，在蓝牙驱动头文件定义和初始化
 extern volatile bluetooth_state_t g_bt_state;
 extern volatile uint8_t g_seq_num;  // 指令流水号
 extern volatile uint32_t g_last_packet_time;

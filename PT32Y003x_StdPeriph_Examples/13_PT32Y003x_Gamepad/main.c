@@ -4,11 +4,17 @@
 // 头文件的添加在keil里面设置了，自动搜索头文件
 
 // ===== 全局变量 =====
+// 指令类别 01:手柄建立连接 02:手柄状态数据
 volatile uint8_t g_current_key_state = 0;
+// 手柄当前的工作模式，影响手柄数据包代表的含义
+// 模式一代表按键舵机模式，当触发按键中断时记录发送标志位，发送完按键数据后清除标志位
+// 模式二代表陀螺仪模式，当触发定时器中断 (每20ms) 时记录发送标志位，发送完陀螺仪数据后清除标志位
 volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
-extern volatile bluetooth_state_t g_bt_state;
-volatile uint8_t g_seq_num = 0;
-volatile uint32_t g_last_packet_time = 0;
+volatile uint8_t g_seq_num = 0;  // 指令流水号
+volatile uint32_t g_last_packet_time = 0;  // 上次发送包的时间戳，用于每20ms发送陀螺仪数据的 逻辑
+
+extern uint16_t rx_buffer[64];
+extern uint8_t rx_index;
 
 // ===== 外部函数声明 =====
 extern void led_init(void);
@@ -29,8 +35,48 @@ extern void bluetooth_send_packet(protocol_packet_t* packet);
 extern void bluetooth_check_connection(void);
 extern uint8_t bluetooth_check_sleep_timeout(void);
 extern void bluetooth_configure_name(void);
+// ===== 处理蓝牙响应 =====
+extern void ProcessBluetoothResponse(void);
 
 extern void gyro_init(void);
+
+#pragma region 串口格式化输出辅助函数
+// 向指定UART发送字符串
+void UART_SendString(UART_TypeDef* UARTx, const char *str)
+{
+    while (*str) {
+        UART_SendData(UARTx, *str);
+        while (UART_GetFlagStatus(UARTx, UART_FLAG_TXE) == RESET);
+        str++;
+    }
+}
+
+// 专门输出到UART0（蓝牙）
+void Bluetooth_Printf(const char *format, ...)
+{
+    char buffer[128];
+    va_list args;
+    
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    
+    UART_SendString(UART0, buffer);
+}
+
+// 专门输出到UART1（调试）
+void Debug_Printf(const char *format, ...)
+{
+    char buffer[128];
+    va_list args;
+    
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    
+    UART_SendString(UART1, buffer);
+}
+#pragma endregion
 
 // ===== 模式检测函数 =====
 work_mode_t detect_work_mode(void)
@@ -43,7 +89,7 @@ work_mode_t detect_work_mode(void)
     gpio.GPIO_Pull = GPIO_Pull_Up;
     GPIO_Init(GPIOA, &gpio);
     
-    delay_ms(10);
+    delay_ms(20);
     
     if (GPIO_ReadDataBit(GPIOA, GPIO_Pin_3) == 1) {
         return WORK_MODE_1_SERVO;  // 悬空 - 模式1
@@ -51,26 +97,45 @@ work_mode_t detect_work_mode(void)
         return WORK_MODE_2_GYRO;   // 接地 - 模式2
     }
 }
+void uart1_init(void)
+{
+    // UART1配置，用于调试
+    UART_InitTypeDef uart;
 
+    GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_1, AFIO_AF_1, ENABLE);
+
+    uart.UART_BaudRate = DEBUG_BAUD;
+    uart.UART_WordLengthAndParity = UART_WordLengthAndParity_8D;
+    uart.UART_StopBitLength = UART_StopBitLength_1;
+    uart.UART_ParityMode = UART_ParityMode_Even;
+    uart.UART_Receiver = UART_Receiver_Disable;
+    uart.UART_LoopbackMode = UART_LoopbackMode_Disable;
+
+    UART_Init(UART1, &uart);
+    UART_Cmd(UART1, ENABLE);
+
+}
 // ===== 初始化所有模块 =====
 void system_init(void)
 {
+    // 系统时钟定时器初始化，用于延时和定时任务
     SysTick_Init();
     
-    // 检测工作模式
-    g_work_mode = detect_work_mode();
+    // UART1初始化
+    uart1_init();
+
+    // 正常发送工作状态信息
+    // Debug_Printf("mode:%d\r\n", g_work_mode);
     
-    // 初始化各模块
+    // 初始化外部 LED 灯，PD4
     led_init();
+    // 快闪模式
+    led_set_blink_fast();
+    // 手柄六个按键初始化
     button_init();
+    // 蓝牙模块初始化
     bluetooth_init();
     
-    // 根据模式初始化相应模块
-    if (g_work_mode == WORK_MODE_1_SERVO) {
-        servo_init();
-    } else if (g_work_mode == WORK_MODE_2_GYRO) {
-        gyro_init();
-    }
 }
 
 // ===== 发送连接状态包 =====
@@ -174,14 +239,48 @@ int main(void)
 {
     system_init();
     
-    // 配置蓝牙名称
+    // TODO: 检查并配置蓝牙名称
     bluetooth_configure_name();
+    Debug_Printf("Check BLE");
+    led_set_off();
+
+    uint8_t i = 0;
+    while (1)
+    {
+        while(rx_index)
+		{
+			UART_SendData(UART1,rx_buffer[i++]);
+			if(i==rx_index)
+			{
+				i=0;
+				rx_index=0;
+			}
+		}
+
+        delay_ms(100);
+    }
     
-    // 发送连接确认包
-    send_connect_packet();
+    // LED状态灯处理
+    // 先发 AT+CF00 设置蓝牙模块的LED灯状态指示为默认显示模式，未连接LED低电平熄灭，连接高
+    // 再由 MCU读 PD3 持续判断蓝牙连接状态，若无连接，120秒自动低功耗休眠
+    // 进入休眠时开启外部按键中断，用于检测按键唤醒
+    // MCU 持续持续判断蓝牙连接状态，直到主机连接蓝牙模块，然后MCU取消自动休眠，并发送首包确认连接
+    // send_connect_packet();
     
     while (1)
     {
+        // TODO: 工作主循环，先检查有没有初始化工作状态，需要额外一个的变量来记录一个工作模式是否初始化完成，当用户在使用过程中切换到新的工作模式时，就重新初始化工作状态并再次记录
+        
+        // 检测工作模式
+        g_work_mode = detect_work_mode();
+
+        // 根据模式初始化相应模块
+        if (g_work_mode == WORK_MODE_1_SERVO) {
+            servo_init();
+        } else if (g_work_mode == WORK_MODE_2_GYRO) {
+            gyro_init();
+        }
+
         bluetooth_check_connection();
         
         // LED控制：严格按照设计文档
