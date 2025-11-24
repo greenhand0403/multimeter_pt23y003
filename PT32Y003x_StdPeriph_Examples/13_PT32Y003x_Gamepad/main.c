@@ -136,6 +136,13 @@ void system_init(void)
     // 蓝牙模块初始化
     bluetooth_init();
     
+    // 需要读取PD3判断蓝牙是否连接，所以配置一下管脚
+    GPIO_InitTypeDef gpio;
+    // PD3
+    gpio.GPIO_Pin = GPIO_Pin_3;
+    gpio.GPIO_Mode = GPIO_Mode_In;
+    gpio.GPIO_Pull = GPIO_Pull_NoPull;
+    GPIO_Init(GPIOD, &gpio);
 }
 
 // ===== 发送连接状态包 =====
@@ -237,16 +244,45 @@ void enter_sleep_mode(void)
 // ===== 主函数 =====
 int main(void)
 {
+    uint8_t i = 0;
+
     system_init();
     
     // TODO: 检查并配置蓝牙名称
     bluetooth_configure_name();
-    Debug_Printf("Check BLE");
-    led_set_off();
+    // 等待直到蓝牙指令查询返回正确格式的蓝牙名称
+    while (rx_buffer[4]!='N')
+    {
+        // 可选，可以试一下默认的蓝牙名称，恢复出厂设置试试
+        if (rx_index>=14)
+        {
+            ProcessBluetoothResponse();
+        }
+        
+        // 接收蓝牙模块发送到串口0的数据，转发到串口1调试
+        while(rx_index)
+        {
+            UART_SendData(UART1,rx_buffer[i++]);
+            if(i==rx_index)
+            {
+                i=0;
+                rx_index=0;
+            }
+        }
 
-    uint8_t i = 0;
+        // LED闪烁表示蓝牙名称不正确
+        led_update();
+        delay_ms(20);
+    }
+    // TODO: 测试，走到这里说明前面的蓝牙名称判断逻辑已经走通
+    led_set_on();
+
     while (1)
     {
+        // LED闪烁表示未连接蓝牙
+        // led_update();
+
+        // 接收蓝牙模块发送到串口0的数据，转发到串口1调试
         while(rx_index)
 		{
 			UART_SendData(UART1,rx_buffer[i++]);
@@ -257,7 +293,7 @@ int main(void)
 			}
 		}
 
-        delay_ms(100);
+        delay_ms(20);
     }
     
     // LED状态灯处理

@@ -69,9 +69,10 @@ void bluetooth_configure_name(void)
 }
 void ProcessBluetoothResponse(void)
 {
+    // 2. 这里解析返回的名称，检查是否为ONBOTS开头
     if (!Legal_Name)
     {
-        // 2. 这里解析返回的名称，检查是否为ONBOTS开头
+        // 处理正确的名称回包
         if (rx_index >= 14 && 
             rx_buffer[0] == 'T' && 
             rx_buffer[1] == 'M' && 
@@ -86,6 +87,7 @@ void ProcessBluetoothResponse(void)
         {
             Legal_Name = 1;
         }
+        // 处理Mac地址回包
         else if (rx_index >= 15 && 
             rx_buffer[0] == 'T' && 
             rx_buffer[1] == 'N' && 
@@ -109,15 +111,12 @@ void ProcessBluetoothResponse(void)
             bluetooth_send_at_command("AT+CZ\r\n");
             delay_ms(1000); // 等待复位完成
         }
+        // 处理默认蓝牙名称时，且未获取Mac地址，则获取Mac地址
         else if (Legal_MAC[0]==0)
         {
-            // 3. 如果不是，查询MAC地址。返回TN+12345678AABB\r\n BLE 的蓝牙地址：0xBB、0xAA、0x78、0x56、0x34、0x12
+            // 3. 如果不是ONBOTS-XXXX名称且未获取Mac地址，则查询MAC地址。返回TN+12345678AABB\r\n BLE 的蓝牙地址：0xBB、0xAA、0x78、0x56、0x34、0x12
             bluetooth_send_at_command("AT+TN\r\n");
             delay_ms(100);
-        }
-        else
-        {
-            
         }
         
     }
