@@ -32,7 +32,7 @@ void bluetooth_send_packet(protocol_packet_t* packet);
 void bluetooth_send_at_command(const char* command);
 void bluetooth_init(void);
 void bluetooth_configure_name_start(void);  // ∆Ù∂Ø≈‰÷√¡˜≥Ã
-void ProcessBluetoothResponse(void);
+void ProcessBluetoothResponse(const char* line);
 bt_config_state_t get_bt_config_state(void);
 // void bluetooth_check_connection(void);
 // uint8_t bluetooth_check_sleep_timeout(void);

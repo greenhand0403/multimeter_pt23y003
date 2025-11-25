@@ -6,14 +6,31 @@
 extern u16 rx_buffer[64];
 extern u8 rx_index;
 
-// 无效：标记是否收到完整行
-volatile uint8_t g_rx_line_complete = 0;
+#define RX_RING_SIZE 128
+
+volatile uint8_t rx_ring[RX_RING_SIZE];
+volatile uint16_t rx_head = 0;
+volatile uint16_t rx_tail = 0;
+volatile uint8_t g_rx_line_complete = 0; // 0/1
+
 // ===== UART0中断服务函数 =====
 void UART0_Handler(void)
 {
     if(UART_GetFlagStatus(UART0,UART_FLAG_RXNE))
 	{
-		rx_buffer[rx_index++] = UART_ReceiveData(UART0);
+		uint8_t b = (uint8_t)UART_ReceiveData(UART0);
+        uint16_t next = (rx_head + 1) % RX_RING_SIZE;
+
+        if (next == rx_tail) {
+            // buffer full: 丢弃这个字节（或选择丢 oldest）
+            // 可选统计溢出次数以便调试
+            // rx_overflow_count++;
+        } else {
+            rx_ring[rx_head] = b;
+            rx_head = next;
+            // 可选：如果想在ISR里快速检测到 \n，可检查 b == '\n' 并设置标志，
+            // 但仍建议让主循环来做行拼接与处理，避免ISR里复杂处理
+        }
 	}
 }
 

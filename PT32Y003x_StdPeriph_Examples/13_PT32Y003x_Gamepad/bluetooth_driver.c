@@ -1,6 +1,39 @@
 #include "bluetooth_driver.h"
 #include <string.h>
+
 extern void Debug_Printf(const char *format, ...);
+extern void led_set_on(void);
+/* 不要包含 <ctype.h>，使用轻量级替代以避免引入大块 libc */
+static inline int my_isxdigit(int c)
+{
+    return ( (c >= '0' && c <= '9') ||
+             (c >= 'A' && c <= 'F') ||
+             (c >= 'a' && c <= 'f') );
+}
+
+/* hex 字符转 0..15，若非法返回 -1 */
+static inline int hex_char_to_nibble(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+
+/* 将连续的 4 个 hex 字符转换为两个字节（例如 "7DAE" -> b1=0x7D, b2=0xAE） 
+   返回 0 成功，-1 失败（如果有非法字符） */
+static inline int parse_4hex_to_bytes(const char *p, uint8_t *b1, uint8_t *b2)
+{
+    int n0 = hex_char_to_nibble(p[0]);
+    int n1 = hex_char_to_nibble(p[1]);
+    int n2 = hex_char_to_nibble(p[2]);
+    int n3 = hex_char_to_nibble(p[3]);
+    if (n0 < 0 || n1 < 0 || n2 < 0 || n3 < 0) return -1;
+    *b1 = (uint8_t)((n0 << 4) | n1);
+    *b2 = (uint8_t)((n2 << 4) | n3);
+    return 0;
+}
+
 // ===== 发送原始数据（用于AT命令）=====
 void bluetooth_send_raw_data(uint8_t* data, uint16_t len)
 {
@@ -74,69 +107,85 @@ bt_config_state_t get_bt_config_state(void)
 {
     return g_bt_config_state;
 }
-void ProcessBluetoothResponse(void)
+// 传入一行（不含 \r\n），例如 "OK"、"AT+BMONBOTS-1024"、"TB+CF7FA6F77DAE"
+void ProcessBluetoothResponse(const char* line)
 {
-    // 2. 这里解析返回的名称，检查是否为ONBOTS开头
-    if (!Legal_Name)
-    {
-        // 处理正确的名称回包
-        if (
-            rx_buffer[0] == 'T' && 
-            rx_buffer[1] == 'M' && 
-            rx_buffer[2] == '+' && 
-            rx_buffer[3] == 'O' && 
-            rx_buffer[4] == 'N' && 
-            rx_buffer[5] == 'B' && 
-            rx_buffer[6] == 'O' &&
-            rx_buffer[7] == 'T' && 
-            rx_buffer[8] == 'S' &&
-            rx_buffer[9] == '-')
-        {
-            Legal_Name = 1;
-        }
-        // BUG: 没有进入这条分支处理Mac地址回包
-        else if (
-            rx_buffer[0] == 'T' && 
-            rx_buffer[1] == 'B' && 
-            rx_buffer[2] == '+')
-        {
-            // 记录蓝牙地址的后两个字节，例如存为3412
-            Legal_MAC[0] = rx_buffer[5];
-            Legal_MAC[1] = rx_buffer[6];
-            Legal_MAC[2] = rx_buffer[3];
-            Legal_MAC[3] = rx_buffer[4];
-            // 4. 解析MAC地址并设置新名称 需要记录为蓝牙名称，然后发送，正常会响应OK
-            // AT+BMONBOTS-3412\r\n
-            // 设置蓝牙名称为“ONBOTS-3412”
-            // 目前测试机时 TB+CF7FA6F77DAE，所以记录为 ONBOTS-A67F
-            char new_name[19];
-            sprintf(new_name, "AT+BMONBOTS-%c%c%c%c\r\n", 
-                (unsigned char)Legal_MAC[0], (unsigned char)Legal_MAC[1], (unsigned char)Legal_MAC[2], (unsigned char)Legal_MAC[3]);
-            Debug_Printf("New name: %s", new_name);
-            bluetooth_send_at_command(new_name);
-            delay_ms(100);
+    // 安全检查
+    if (line == NULL || line[0] == '\0') return;
 
-            // 5. 复位模块，正常会打印多行蓝牙模块信息
-            bluetooth_send_at_command("AT+CZ\r\n");
-            delay_ms(1000); // 等待复位完成
+    Debug_Printf("BT LINE: %s\r\n", line);
 
-            // 6. 查询蓝牙名称
-            bluetooth_configure_name_start();
-        }
-        // 处理默认蓝牙名称时，且未获取Mac地址，则获取Mac地址
-        else if (Legal_MAC[0]==0)
-        {
-            // 3. 如果不是ONBOTS-XXXX名称且未获取Mac地址，则查询MAC地址
-            // 返回TB+12345678AABB\r\n BLE 的蓝牙地址：0xBB、0xAA、0x78、0x56、0x34、0x12
-            bluetooth_send_at_command("AT+TN\r\n");
-            delay_ms(100);
-        }
-        
+    // 如果有模块在返回 OK，暂时忽略
+    if (strcmp(line, "OK") == 0) {
+        return;
     }
-    // 正常收发
 
+    // 检查是否包含 ONBOTS 名称（模块回复是 AT+BMONBOTS-xxxx 或 AT+BMKTB3B8A）
+    const char* p = strstr(line, "ONBOTS-");
+    if (p) {
+        // p 指向 ONBOTS- 后面
+        const char* suffix = p + strlen("ONBOTS-");
+        // suffix 应该是 4 个字符（例如 "1024"），但也要容错
+        char name_suffix[8] = {0};
+        strncpy(name_suffix, suffix, 4); // 最多4个
+        name_suffix[4] = '\0';
+        Debug_Printf("Found name suffix: %s\r\n", name_suffix);
 
+        // 这里可以判断格式合法后点亮 LED
+        if (strlen(name_suffix) >= 2) {
+            led_set_on();
+            // 标记蓝牙名已正确
+            // g_bt_state = BT_STATE_CONFIGURED; // 示例
+        }
+        return;
+    }
+
+    // 检查是否是 MAC 返回
+    // 找到连续的十六进制串（长度12对应MAC）
+    // 例如 line == "TB+CF7FA6F77DAE"
+    {
+        const char* hexp = line;
+        while (*hexp) {
+            if (my_isxdigit((unsigned char)*hexp)) {
+                const char* start = hexp;
+                int cnt = 0;
+                while (my_isxdigit((unsigned char)*hexp)) { cnt++; hexp++; }
+                if (cnt >= 4) {
+                    const char* tail = start + cnt - 4;
+                    uint8_t b1, b2;
+                    if (parse_4hex_to_bytes(tail, &b1, &b2) == 0) {
+                        char new_suffix[5];
+                        /* 避免 snprintf，如果你已有非常小的串口打印函数（如 Bluetooth_Printf）
+                        也要留意它是否会拉入 printf 的实现。为了最小化影响，我们用简单的字符构造： */
+                        static const char hexchars[] = "0123456789ABCDEF";
+                        new_suffix[0] = hexchars[(b1 >> 4) & 0xF];
+                        new_suffix[1] = hexchars[b1 & 0xF];
+                        new_suffix[2] = hexchars[(b2 >> 4) & 0xF];
+                        new_suffix[3] = hexchars[b2 & 0xF];
+                        new_suffix[4] = '\0';
+                        
+                        // char new_name[19];
+                        // sprintf(new_name, "AT+BMONBOTS-%c%c%c%c\r\n", 
+                        //     new_suffix[0], new_suffix[1], new_suffix[2], new_suffix[3]);
+                        // Debug_Printf("New name: %s", new_name);
+                        // bluetooth_send_at_command(new_name);
+                        // delay_ms(100);
+            
+                        // // 5. 复位模块，正常会打印多行蓝牙模块信息
+                        // bluetooth_send_at_command("AT+CZ\r\n");
+                        // delay_ms(1000); // 等待复位完成
+            
+                        // // 6. 查询蓝牙名称
+                        // bluetooth_configure_name_start();
+                    }
+                }
+            } else {
+                hexp++;
+            }
+        }
+    }
 }
+
 // 2分钟无连接休眠的逻辑应该在LED驱动处负责休眠
 // ===== 检查连接状态 =====
 // void bluetooth_check_connection(void)

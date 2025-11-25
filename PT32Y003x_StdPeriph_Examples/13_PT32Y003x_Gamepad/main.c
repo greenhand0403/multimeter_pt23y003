@@ -16,6 +16,13 @@ volatile uint32_t g_last_packet_time = 0;  // 上次发送包的时间戳，用�
 extern uint16_t rx_buffer[64];
 extern uint8_t rx_index;
 extern volatile uint8_t g_rx_line_complete;
+extern volatile uint16_t rx_head;
+extern volatile uint16_t rx_tail;
+extern volatile uint8_t rx_ring[128];
+// 临时行缓冲
+#define LINE_BUF_SIZE 128
+char line_buf[LINE_BUF_SIZE];
+uint16_t line_len = 0;
 
 // ===== 外部函数声明 =====
 extern void led_init(void);
@@ -37,7 +44,7 @@ extern void bluetooth_check_connection(void);
 extern uint8_t bluetooth_check_sleep_timeout(void);
 extern void bluetooth_configure_name_start(void);
 // ===== 处理蓝牙响应 =====
-extern void ProcessBluetoothResponse(void);
+extern void ProcessBluetoothResponse(const char *line);
 
 extern void gyro_init(void);
 
@@ -241,38 +248,60 @@ void enter_sleep_mode(void)
     
     PWR_EnterDeepSleepMode(PWR_DeepSleepEntry_WFI);
 }
-extern uint8_t Legal_MAC[4];
+void PollAndProcessUARTLines(void)
+{
+    // 从环形缓冲读取字节，拼成行
+    while (rx_tail != rx_head) {
+        uint8_t b = rx_ring[rx_tail];
+        rx_tail = (rx_tail + 1) % 128;
+
+        // 限制行长度，防止越界
+        if (line_len < LINE_BUF_SIZE - 1) {
+            line_buf[line_len++] = (char)b;
+        } else {
+            // 行太长，丢弃并重置
+            line_len = 0;
+        }
+
+        // 检测到 \r\n 结尾（常见的是 \r\n 两字节）
+        if (b == '\n') {
+            // 去掉末尾可能的 \r
+            if (line_len >= 2 && line_buf[line_len - 2] == '\r') {
+                line_buf[line_len - 2] = '\0';
+            } else {
+                line_buf[line_len - 1] = '\0';
+            }
+
+            // 设置标志或直接调用处理函数
+            ProcessBluetoothResponse(line_buf); // 建议把行内容传给处理函数
+            line_len = 0;
+        }
+    }
+}
 // ===== 主函数 =====
 int main(void)
 {
-    uint8_t i = 0,j = 0;
-    uint16_t test_buffer[64];
+    uint8_t i = 0;
     
     system_init();
     
     // TODO: 检查并配置蓝牙名称
     bluetooth_configure_name_start();
     // 等待直到蓝牙指令查询返回正确格式的蓝牙名称 ONBOTS-XXXX
-    while (rx_buffer[4]!='N')
+    while (1)
     {
-        // 处理蓝牙模块重命名的逻辑
-        if (rx_index>0)
-        {
-            Debug_Printf("%d\r\n", rx_index);
-
-            ProcessBluetoothResponse();
-        }
+        PollAndProcessUARTLines();
         
         // 接收蓝牙模块发送到串口0的数据，转发到串口1调试
-        while(rx_index)
-        {
-            UART_SendData(UART1,rx_buffer[i++]);
-            if(i>=rx_index)
-            {
-                i=0;
-                rx_index=0;
-            }
-        }
+        // while(rx_index)
+        // {
+        //     UART_SendData(UART1,rx_buffer[i++]);
+        //     if(i>=rx_index)
+        //     {
+        //         i=0;
+        //         rx_index=0;
+        //     }
+        // }
 
         // LED闪烁表示蓝牙名称不正确
         led_update();
