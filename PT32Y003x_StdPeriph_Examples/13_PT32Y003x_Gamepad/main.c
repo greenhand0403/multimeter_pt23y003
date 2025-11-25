@@ -15,6 +15,7 @@ volatile uint32_t g_last_packet_time = 0;  // 上次发送包的时间戳，用�
 
 extern uint16_t rx_buffer[64];
 extern uint8_t rx_index;
+extern volatile uint8_t g_rx_line_complete;
 
 // ===== 外部函数声明 =====
 extern void led_init(void);
@@ -34,7 +35,7 @@ extern void bluetooth_init(void);
 extern void bluetooth_send_packet(protocol_packet_t* packet);
 extern void bluetooth_check_connection(void);
 extern uint8_t bluetooth_check_sleep_timeout(void);
-extern void bluetooth_configure_name(void);
+extern void bluetooth_configure_name_start(void);
 // ===== 处理蓝牙响应 =====
 extern void ProcessBluetoothResponse(void);
 
@@ -240,22 +241,25 @@ void enter_sleep_mode(void)
     
     PWR_EnterDeepSleepMode(PWR_DeepSleepEntry_WFI);
 }
-
+extern uint8_t Legal_MAC[4];
 // ===== 主函数 =====
 int main(void)
 {
-    uint8_t i = 0;
-
+    uint8_t i = 0,j = 0;
+    uint16_t test_buffer[64];
+    
     system_init();
     
     // TODO: 检查并配置蓝牙名称
-    bluetooth_configure_name();
+    bluetooth_configure_name_start();
     // 等待直到蓝牙指令查询返回正确格式的蓝牙名称 ONBOTS-XXXX
     while (rx_buffer[4]!='N')
     {
-        // 可选，可以试一下默认的蓝牙名称，恢复出厂设置试试
-        if (rx_index>=14)
+        // 处理蓝牙模块重命名的逻辑
+        if (rx_index>0)
         {
+            Debug_Printf("%d\r\n", rx_index);
+
             ProcessBluetoothResponse();
         }
         
@@ -263,7 +267,7 @@ int main(void)
         while(rx_index)
         {
             UART_SendData(UART1,rx_buffer[i++]);
-            if(i==rx_index)
+            if(i>=rx_index)
             {
                 i=0;
                 rx_index=0;
@@ -272,7 +276,6 @@ int main(void)
 
         // LED闪烁表示蓝牙名称不正确
         led_update();
-        delay_ms(20);
     }
     // TODO: 测试，走到这里说明前面的蓝牙名称判断逻辑已经走通
     led_set_on();

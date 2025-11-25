@@ -6,12 +6,14 @@
 extern u16 rx_buffer[64];
 extern u8 rx_index;
 
+// 无效：标记是否收到完整行
+volatile uint8_t g_rx_line_complete = 0;
 // ===== UART0中断服务函数 =====
 void UART0_Handler(void)
 {
     if(UART_GetFlagStatus(UART0,UART_FLAG_RXNE))
 	{
-		rx_buffer[rx_index++]=UART_ReceiveData(UART0);
+		rx_buffer[rx_index++] = UART_ReceiveData(UART0);
 	}
 }
 

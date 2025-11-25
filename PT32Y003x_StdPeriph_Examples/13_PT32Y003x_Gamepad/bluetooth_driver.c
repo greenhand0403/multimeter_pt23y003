@@ -60,12 +60,19 @@ void bluetooth_init(void)
 }
 
 // ===== 配置蓝牙名称 =====
-void bluetooth_configure_name(void)
+// 启动蓝牙配置流程
+void bluetooth_configure_name_start(void)
 {
-    // 1. 查询当前名称，已确认能正常发送
-    bluetooth_send_at_command("AT+TM\r\n");
-    delay_ms(100);
+    g_bt_config_state = BT_CFG_STATE_QUERY_NAME;
+    g_bt_config_complete = 0;
     
+    // 开始查询当前名称
+    bluetooth_send_at_command("AT+TM\r\n");
+}
+// 获取当前配置状态（供外部查询）
+bt_config_state_t get_bt_config_state(void)
+{
+    return g_bt_config_state;
 }
 void ProcessBluetoothResponse(void)
 {
@@ -73,7 +80,7 @@ void ProcessBluetoothResponse(void)
     if (!Legal_Name)
     {
         // 处理正确的名称回包
-        if (rx_index >= 14 && 
+        if (
             rx_buffer[0] == 'T' && 
             rx_buffer[1] == 'M' && 
             rx_buffer[2] == '+' && 
@@ -88,7 +95,7 @@ void ProcessBluetoothResponse(void)
             Legal_Name = 1;
         }
         // BUG: 没有进入这条分支处理Mac地址回包
-        else if (rx_index >= 15 && 
+        else if (
             rx_buffer[0] == 'T' && 
             rx_buffer[1] == 'B' && 
             rx_buffer[2] == '+')
@@ -98,28 +105,29 @@ void ProcessBluetoothResponse(void)
             Legal_MAC[1] = rx_buffer[6];
             Legal_MAC[2] = rx_buffer[3];
             Legal_MAC[3] = rx_buffer[4];
-            // 4. 解析MAC地址并设置新名称 需要记录为蓝牙名称，然后发送
+            // 4. 解析MAC地址并设置新名称 需要记录为蓝牙名称，然后发送，正常会响应OK
             // AT+BMONBOTS-3412\r\n
             // 设置蓝牙名称为“ONBOTS-3412”
             // 目前测试机时 TB+CF7FA6F77DAE，所以记录为 ONBOTS-A67F
-            char new_name[18];
+            char new_name[19];
             sprintf(new_name, "AT+BMONBOTS-%c%c%c%c\r\n", 
-                Legal_MAC[0], Legal_MAC[1], Legal_MAC[2], Legal_MAC[3]);
+                (unsigned char)Legal_MAC[0], (unsigned char)Legal_MAC[1], (unsigned char)Legal_MAC[2], (unsigned char)Legal_MAC[3]);
             Debug_Printf("New name: %s", new_name);
             bluetooth_send_at_command(new_name);
             delay_ms(100);
 
-            // 5. 复位模块
+            // 5. 复位模块，正常会打印多行蓝牙模块信息
             bluetooth_send_at_command("AT+CZ\r\n");
             delay_ms(1000); // 等待复位完成
 
             // 6. 查询蓝牙名称
-            bluetooth_configure_name();
+            bluetooth_configure_name_start();
         }
         // 处理默认蓝牙名称时，且未获取Mac地址，则获取Mac地址
         else if (Legal_MAC[0]==0)
         {
-            // 3. 如果不是ONBOTS-XXXX名称且未获取Mac地址，则查询MAC地址。返回TN+12345678AABB\r\n BLE 的蓝牙地址：0xBB、0xAA、0x78、0x56、0x34、0x12
+            // 3. 如果不是ONBOTS-XXXX名称且未获取Mac地址，则查询MAC地址
+            // 返回TB+12345678AABB\r\n BLE 的蓝牙地址：0xBB、0xAA、0x78、0x56、0x34、0x12
             bluetooth_send_at_command("AT+TN\r\n");
             delay_ms(100);
         }
