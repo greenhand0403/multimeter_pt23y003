@@ -250,7 +250,7 @@ int main(void)
     
     // TODO: 检查并配置蓝牙名称
     bluetooth_configure_name();
-    // 等待直到蓝牙指令查询返回正确格式的蓝牙名称
+    // 等待直到蓝牙指令查询返回正确格式的蓝牙名称 ONBOTS-XXXX
     while (rx_buffer[4]!='N')
     {
         // 可选，可以试一下默认的蓝牙名称，恢复出厂设置试试

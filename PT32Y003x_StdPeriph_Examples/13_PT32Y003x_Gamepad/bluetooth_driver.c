@@ -1,6 +1,6 @@
 #include "bluetooth_driver.h"
 #include <string.h>
-
+extern void Debug_Printf(const char *format, ...);
 // ===== 发送原始数据（用于AT命令）=====
 void bluetooth_send_raw_data(uint8_t* data, uint16_t len)
 {
@@ -87,10 +87,10 @@ void ProcessBluetoothResponse(void)
         {
             Legal_Name = 1;
         }
-        // 处理Mac地址回包
+        // BUG: 没有进入这条分支处理Mac地址回包
         else if (rx_index >= 15 && 
             rx_buffer[0] == 'T' && 
-            rx_buffer[1] == 'N' && 
+            rx_buffer[1] == 'B' && 
             rx_buffer[2] == '+')
         {
             // 记录蓝牙地址的后两个字节，例如存为3412
@@ -101,15 +101,20 @@ void ProcessBluetoothResponse(void)
             // 4. 解析MAC地址并设置新名称 需要记录为蓝牙名称，然后发送
             // AT+BMONBOTS-3412\r\n
             // 设置蓝牙名称为“ONBOTS-3412”
-            // 目前测试机时 TN+CF7FA6F77DAE，所以记录为 ONBOTS-A67F
+            // 目前测试机时 TB+CF7FA6F77DAE，所以记录为 ONBOTS-A67F
             char new_name[18];
-            sprintf(new_name, "ONBOTS-%s\r\n", Legal_MAC);
+            sprintf(new_name, "AT+BMONBOTS-%c%c%c%c\r\n", 
+                Legal_MAC[0], Legal_MAC[1], Legal_MAC[2], Legal_MAC[3]);
+            Debug_Printf("New name: %s", new_name);
             bluetooth_send_at_command(new_name);
             delay_ms(100);
 
             // 5. 复位模块
             bluetooth_send_at_command("AT+CZ\r\n");
             delay_ms(1000); // 等待复位完成
+
+            // 6. 查询蓝牙名称
+            bluetooth_configure_name();
         }
         // 处理默认蓝牙名称时，且未获取Mac地址，则获取Mac地址
         else if (Legal_MAC[0]==0)
