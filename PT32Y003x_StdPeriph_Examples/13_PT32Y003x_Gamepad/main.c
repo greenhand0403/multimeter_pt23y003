@@ -1,17 +1,23 @@
 #include "system_config.h"
 #include <PT32Y003x_pwr.h>
 #include <PT32Y003x_exti.h>
+
+#define DEBUG_FLAG 1
+
 // 头文件的添加在keil里面设置了，自动搜索头文件
 
-// ===== 全局变量 =====
 // 指令类别 01:手柄建立连接 02:手柄状态数据
 volatile uint8_t g_current_key_state = 0;
+volatile uint8_t g_seq_num = 0;  // 指令流水号
+volatile uint32_t g_last_packet_time = 0;  // 上次发送包的时间戳，用于每20ms发送陀螺仪数据的 逻辑
+
+// 蓝牙名称是否合法 1 则合法
+uint8_t BLE_NAME_LEGAL = 0;
+
 // 手柄当前的工作模式，影响手柄数据包代表的含义
 // 模式一代表按键舵机模式，当触发按键中断时记录发送标志位，发送完按键数据后清除标志位
 // 模式二代表陀螺仪模式，当触发定时器中断 (每20ms) 时记录发送标志位，发送完陀螺仪数据后清除标志位
 volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
-volatile uint8_t g_seq_num = 0;  // 指令流水号
-volatile uint32_t g_last_packet_time = 0;  // 上次发送包的时间戳，用于每20ms发送陀螺仪数据的 逻辑
 
 extern uint16_t rx_buffer[64];
 extern uint8_t rx_index;
@@ -75,6 +81,7 @@ void Bluetooth_Printf(const char *format, ...)
 // 专门输出到UART1（调试）
 void Debug_Printf(const char *format, ...)
 {
+#if DEBUG_FLAG
     char buffer[128];
     va_list args;
     
@@ -83,6 +90,7 @@ void Debug_Printf(const char *format, ...)
     va_end(args);
     
     UART_SendString(UART1, buffer);
+#endif
 }
 #pragma endregion
 
@@ -128,17 +136,17 @@ void system_init(void)
 {
     // 系统时钟定时器初始化，用于延时和定时任务
     SysTick_Init();
-    
-    // UART1初始化
-    uart1_init();
 
-    // 正常发送工作状态信息
-    // Debug_Printf("mode:%d\r\n", g_work_mode);
-    
+#ifdef DEBUG_FLAG
+    // UART1初始化，用于调试
+    uart1_init();
+#endif
+
     // 初始化外部 LED 灯，PD4
     led_init();
     // 快闪模式
     led_set_blink_fast();
+
     // 手柄六个按键初始化
     button_init();
     // 蓝牙模块初始化
@@ -285,13 +293,23 @@ int main(void)
     
     system_init();
     
-    // TODO: 检查并配置蓝牙名称
-    bluetooth_configure_name_start();
+    // 状态机一，等待查询到蓝牙名称合法
+    while (!BLE_NAME_LEGAL)
+    {
+        // 未连接LED快闪
+        led_update();
+        // 串口接收数据按行读取
+        PollAndProcessUARTLines();
+        // 蓝牙名称检查循环
+        bluetooth_configure_name_start();
+    }
+    // TODO: 测试，走到这里说明前面的蓝牙名称判断逻辑已经走通
+    led_set_on();
+    // 状态机二，判断蓝牙是否连接，然后进入模式一或模式二的工作中
+    
     // 等待直到蓝牙指令查询返回正确格式的蓝牙名称 ONBOTS-XXXX
     while (1)
     {
-        PollAndProcessUARTLines();
-        
         // 接收蓝牙模块发送到串口0的数据，转发到串口1调试
         // while(rx_index)
         // {
@@ -302,39 +320,13 @@ int main(void)
         //         rx_index=0;
         //     }
         // }
-
-        // LED闪烁表示蓝牙名称不正确
-        led_update();
-    }
-    // TODO: 测试，走到这里说明前面的蓝牙名称判断逻辑已经走通
-    led_set_on();
-
-    while (1)
-    {
-        // LED闪烁表示未连接蓝牙
-        // led_update();
-
-        // 接收蓝牙模块发送到串口0的数据，转发到串口1调试
-        while(rx_index)
-		{
-			UART_SendData(UART1,rx_buffer[i++]);
-			if(i==rx_index)
-			{
-				i=0;
-				rx_index=0;
-			}
-		}
-
-        delay_ms(20);
     }
     
-    // LED状态灯处理
-    // 先发 AT+CF00 设置蓝牙模块的LED灯状态指示为默认显示模式，未连接LED低电平熄灭，连接高
-    // 再由 MCU读 PD3 持续判断蓝牙连接状态，若无连接，120秒自动低功耗休眠
+    // 由 MCU读 PD3 持续判断蓝牙连接状态，若无连接，120秒自动低功耗休眠
     // 进入休眠时开启外部按键中断，用于检测按键唤醒
     // MCU 持续持续判断蓝牙连接状态，直到主机连接蓝牙模块，然后MCU取消自动休眠，并发送首包确认连接
     // send_connect_packet();
-    
+#if 0
     while (1)
     {
         // TODO: 工作主循环，先检查有没有初始化工作状态，需要额外一个的变量来记录一个工作模式是否初始化完成，当用户在使用过程中切换到新的工作模式时，就重新初始化工作状态并再次记录
@@ -384,6 +376,7 @@ int main(void)
         
         delay_ms(1);
     }
+#endif
 }
 
 #ifdef  USE_FULL_ASSERT

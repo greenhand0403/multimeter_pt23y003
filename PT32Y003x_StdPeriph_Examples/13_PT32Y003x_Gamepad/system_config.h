@@ -31,14 +31,15 @@
 // ===== LED定义 =====
 #define LED_PIN     GPIOD, GPIO_Pin_4    // 蓝色LED连接到PD4
 
+// 蓝牙连接状态指示 PD3
+#define BT_CONNECT_LED_PIN  GPIOD, GPIO_Pin_3
+
 // ===== 时间配置 =====
 #define AUTO_SLEEP_TIMEOUT_MS  120000  // 2分钟自动休眠
-#define BLINK_FAST_INTERVAL_MS 200     // 快闪间隔
-#define BLINK_SLOW_INTERVAL_MS 500     // 慢闪间隔
 
 // ===== 模式检测 =====
 #define MODE_DETECT_PIN   GPIOA, GPIO_Pin_3  // PA3: 悬空=模式1, 接地=模式2
-#define MODE_1    1  // 舵机模式
+#define MODE_1    1  // 按键与舵机模式
 #define MODE_2    2  // 陀螺仪模式
 
 // ===== 通信协议定义 =====
@@ -67,7 +68,6 @@ typedef struct {
 // ===== 全局状态定义 =====
 typedef enum {
     BT_STATE_DISCONNECTED = 0,
-    BT_STATE_CONNECTING,
     BT_STATE_CONNECTED
 } bluetooth_state_t;
 
@@ -78,11 +78,21 @@ typedef enum {
 } work_mode_t;
 
 // ===== 全局变量声明 =====
-extern volatile uint8_t g_current_key_state;
 extern volatile work_mode_t g_work_mode;
 // 蓝牙状态连接与否，在蓝牙驱动头文件定义和初始化
 extern volatile bluetooth_state_t g_bt_state;
+
+extern volatile uint8_t g_current_key_state;
 extern volatile uint8_t g_seq_num;  // 指令流水号
 extern volatile uint32_t g_last_packet_time;
+extern uint8_t BLE_NAME_LEGAL;
+
+// 指令类别 01:手柄建立连接 02:手柄状态数据
+// volatile uint8_t g_current_key_state = 0;
+// volatile uint8_t g_seq_num = 0;  // 指令流水号
+// volatile uint32_t g_last_packet_time = 0;  // 上次发送包的时间戳，用于每20ms发送陀螺仪数据的 逻辑
+
+// 蓝牙名称是否合法 1 则合法
+// uint8_t BLE_NAME_LEGAL = 0;
 
 #endif // SYSTEM_CONFIG_H
