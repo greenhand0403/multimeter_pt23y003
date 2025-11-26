@@ -303,6 +303,7 @@ int main(void)
         // 蓝牙名称检查循环
         bluetooth_configure_name_start();
     }
+    Debug_Printf("BLE NAME OK\r\n");
     // TODO: 测试，走到这里说明前面的蓝牙名称判断逻辑已经走通
     led_set_on();
     // 状态机二，判断蓝牙是否连接，然后进入模式一或模式二的工作中

@@ -106,17 +106,24 @@ void ProcessBluetoothResponse(const char* line)
         // 如果已经发送了设置名字，那么再发送复位命令
         if (g_bt_config_state == BT_CFG_STATE_SET_NAME)
         {
-            bluetooth_send_at_command("AT+CZ\r\n");
             g_bt_config_state = BT_CFG_STATE_COMPLETE;
-            // 打印一下状态
-            Debug_Printf("g_bt_config_state:%d\r\n", g_bt_config_state);
+        }
+        else if (g_bt_config_state==BT_CFG_STATE_COMPLETE)
+        {
+            Debug_Printf("softreset ble\r\n");
+            bluetooth_send_at_command("AT+CZ\r\n");
         }
         return;
     }
 
+    // if (g_bt_config_state == BT_CFG_STATE_COMPLETE && strstr(line, "QL+") != NULL)
+    // {
+        // 蓝牙模块默认发送初始信息，其中最后一个是 QL+00 表示正常工作模式中
+        // 我们需要等待它返回QL+之后再发查询名字的命令？
+    // }
     // 如果返回的是名称行，例如 "TM+OBTEST-1024" 或 "TM+ONBOTS-XXXX"
     // 既处理蓝牙名称查询指令的回复，也响应软复位后的蓝牙信息回复，从中检查蓝牙名称
-    if (strstr(line, "TM+ONBOTS-") != NULL) {
+    if (strstr(line, "TM+") != NULL) {
         // 解析名字行
         const char* p = strstr(line, "ONBOTS-");
         if (p) {
@@ -131,23 +138,19 @@ void ProcessBluetoothResponse(const char* line)
             }
             return; // 已处理完该行，直接返回
         } else {
+            // Debug_Printf("ilegal\r\n");
             // 名字不是期望格式，开始查询 MAC（并且**立即返回**，不要继续用当前行解析MAC）
-            if (g_bt_config_state == BT_CFG_STATE_IDLE || g_bt_config_state == BT_CFG_STATE_QUERY_NAME) {
+            // if (g_bt_config_state == BT_CFG_STATE_IDLE || g_bt_config_state == BT_CFG_STATE_QUERY_NAME) {
+                Debug_Printf("get mac\r\n");
                 g_bt_config_state = BT_CFG_STATE_QUERY_MAC;
                 bluetooth_send_at_command("AT+TN\r\n"); // 发送查询MAC命令
                 return; // 关键：返回，避免下面把当前名字行当作MAC解析
-            }
+            // }
         }
     }
     // 下面只处理真正的 MAC 行 —— 先做一个更严格的前缀检查，避免误判
     // 例如你的模块 MAC 行是 "TB+CF7FA6F77DAE"，所以我们检查是否包含 "TB+"
-    if (g_bt_config_state == BT_CFG_STATE_QUERY_MAC) {
-        // 优先检查常见前缀（模块具体格式以你的模块文档为准）
-        if (strstr(line, "TB+") == NULL) {
-            // 这行不是我们期待的 MAC 行，直接返回等待下一个行
-            return;
-        }
-
+    if (strstr(line, "TB+") != NULL &&g_bt_config_state == BT_CFG_STATE_QUERY_MAC) {
         // 找到连续的 hex 串并取合适的 4 个字符（此处以取 run 的前 4 个并按你的要求换位为例）
         const char* hexp = line;
         while (*hexp) {
@@ -175,12 +178,11 @@ void ProcessBluetoothResponse(const char* line)
                     p += 2;
                     *p = '\0';
 
-                    Debug_Printf("new_name:%s\r\n", new_name);
+                    Debug_Printf("setname:%s", new_name);
 
                     // 发送设置名称命令
                     bluetooth_send_at_command(new_name);
-
-                    // 切换状态，等待确认（不要立刻发送 reset）
+                    // 发完蓝牙模块会返回OK ，我们需要等待它返回OK 后，再发送 reset 命令
                     g_bt_config_state = BT_CFG_STATE_SET_NAME;
                     return; // 完成该行处理后返回
                 }
