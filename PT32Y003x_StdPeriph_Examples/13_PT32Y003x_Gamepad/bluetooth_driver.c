@@ -99,98 +99,95 @@ void ProcessBluetoothResponse(const char* line)
     // 安全检查
     if (line == NULL || line[0] == '\0') return;
 
-    Debug_Printf("BTL:%s\r\n", line);
+    Debug_Printf("RX0:%s\r\n", line);
 
     // 如果有模块在返回 OK，暂时忽略
     if (strcmp(line, "OK") == 0) {
-        return;
-    }
-
-    // 检查是否包含 ONBOTS 名称（发送查询命令后，蓝牙模块回复是 AT+BMONBOTS-xxxx 或 AT+BMKTB3B8A）
-    const char* p = strstr(line, "ONBOTS-");
-    if (p) {
-        // p 指向 ONBOTS- 后面
-        const char* suffix = p + strlen("ONBOTS-");
-        // suffix 应该是 4 个字符（例如 "1024"），但也要容错
-        char name_suffix[8] = {0};
-        strncpy(name_suffix, suffix, 4); // 最多4个
-        name_suffix[4] = '\0';
-        Debug_Printf("BTNL:%s\r\n", name_suffix);
-
-        // 这里可以判断格式合法后点亮 LED
-        if (strlen(name_suffix) >= 2) {
-            // 标记蓝牙名已正确
-            // g_bt_config_state = BT_CFG_STATE_QUERY_NAME;
-            BLE_NAME_LEGAL = 1;
+        // 如果已经发送了设置名字，那么再发送复位命令
+        if (g_bt_config_state == BT_CFG_STATE_SET_NAME)
+        {
+            bluetooth_send_at_command("AT+CZ\r\n");
+            g_bt_config_state = BT_CFG_STATE_COMPLETE;
+            // 打印一下状态
+            Debug_Printf("g_bt_config_state:%d\r\n", g_bt_config_state);
         }
         return;
     }
 
-    // 走到这里说明前面判断蓝牙名称不合法，那么发送Mac地址查询的命令给蓝牙模块
-    if (g_bt_config_state == BT_CFG_STATE_QUERY_NAME)
-    {
-        g_bt_config_state = BT_CFG_STATE_QUERY_MAC;
-        // 开始查询当前Mac地址
-        bluetooth_send_at_command("AT+TN\r\n");
-        return;
+    // 如果返回的是名称行，例如 "TM+OBTEST-1024" 或 "TM+ONBOTS-XXXX"
+    // 既处理蓝牙名称查询指令的回复，也响应软复位后的蓝牙信息回复，从中检查蓝牙名称
+    if (strstr(line, "TM+ONBOTS-") != NULL) {
+        // 解析名字行
+        const char* p = strstr(line, "ONBOTS-");
+        if (p) {
+            // 名字已经是 ONBOTS-xxxx，直接标记合法
+            const char* suffix = p + strlen("ONBOTS-");
+            char name_suffix[8] = {0};
+            strncpy(name_suffix, suffix, 4);
+            name_suffix[4] = '\0';
+            Debug_Printf("name_suffix:%s\r\n", name_suffix);
+            if (strlen(name_suffix) >= 2) {
+                BLE_NAME_LEGAL = 1;
+            }
+            return; // 已处理完该行，直接返回
+        } else {
+            // 名字不是期望格式，开始查询 MAC（并且**立即返回**，不要继续用当前行解析MAC）
+            if (g_bt_config_state == BT_CFG_STATE_IDLE || g_bt_config_state == BT_CFG_STATE_QUERY_NAME) {
+                g_bt_config_state = BT_CFG_STATE_QUERY_MAC;
+                bluetooth_send_at_command("AT+TN\r\n"); // 发送查询MAC命令
+                return; // 关键：返回，避免下面把当前名字行当作MAC解析
+            }
+        }
     }
-    
-    // 检查是否连续的十六进制串（长度12对应MAC）
-    // 例如 line == "TB+CF7FA6F77DAE"
-    if (g_bt_config_state == BT_CFG_STATE_QUERY_MAC)
-    {
+    // 下面只处理真正的 MAC 行 —— 先做一个更严格的前缀检查，避免误判
+    // 例如你的模块 MAC 行是 "TB+CF7FA6F77DAE"，所以我们检查是否包含 "TB+"
+    if (g_bt_config_state == BT_CFG_STATE_QUERY_MAC) {
+        // 优先检查常见前缀（模块具体格式以你的模块文档为准）
+        if (strstr(line, "TB+") == NULL) {
+            // 这行不是我们期待的 MAC 行，直接返回等待下一个行
+            return;
+        }
+
+        // 找到连续的 hex 串并取合适的 4 个字符（此处以取 run 的前 4 个并按你的要求换位为例）
         const char* hexp = line;
         while (*hexp) {
             if (my_isxdigit((unsigned char)*hexp)) {
                 const char* start = hexp;
                 int cnt = 0;
-                while (my_isxdigit((unsigned char)*hexp))
-                { 
-                    cnt++;
-                    hexp++;
-                }
-                // 走到这一步，说明是连续的12字节 CF7FA6F77DAE
+                while (my_isxdigit((unsigned char)*hexp)) { cnt++; hexp++; }
                 if (cnt >= 4) {
-                    // 取前4个字节排列一下，加上前缀就能发送命令设置蓝牙名称了
-
-                    /* 构造 "AT+BMONBOTS-XXXX\r\n" （共 18 字符）+ 1 字节终止符 => 19 字节 */
-                    char new_name[20]; // 19 bytes needed, 20 安全
+                    // 这里选择使用 run 的前 4 个字符作为基准（如 CF7F -> 7FCF）
+                    char new_name[20];
                     const char prefix[] = "AT+BMONBOTS-";
                     char *p = new_name;
-
-                    /* 把前缀拷进 new_name */
-                    memcpy(p, prefix, sizeof(prefix) - 1); // 不拷贝末尾 '\0'
+                    memcpy(p, prefix, sizeof(prefix) - 1);
                     p += (sizeof(prefix) - 1);
 
                     /* 拷入 4 个后缀字符 CF7F 就变成了 ONBOTS-7FCF */
-                    p[0] = *(start+2);
-                    p[1] = *(start+3);
-                    p[2] = *(start+0);
-                    p[3] = *(start+1);
+                    p[0] = *(start + 2); // 第3个字符
+                    p[1] = *(start + 3); // 第4个字符
+                    p[2] = *(start + 0); // 第1个字符
+                    p[3] = *(start + 1); // 第2个字符
                     p += 4;
 
-                    /* 加上 CR LF 和终止符 */
                     p[0] = '\r';
                     p[1] = '\n';
                     p += 2;
                     *p = '\0';
 
-                    Debug_Printf("BTNL:%s\r\n", new_name);
+                    Debug_Printf("new_name:%s\r\n", new_name);
+
+                    // 发送设置名称命令
                     bluetooth_send_at_command(new_name);
+
+                    // 切换状态，等待确认（不要立刻发送 reset）
                     g_bt_config_state = BT_CFG_STATE_SET_NAME;
+                    return; // 完成该行处理后返回
                 }
             } else {
                 hexp++;
             }
         }
-    }
-    // 如果已经发送了设置名字，那么再发送复位命令
-    if (g_bt_config_state == BT_CFG_STATE_SET_NAME)
-    {
-        bluetooth_send_at_command("AT+CZ\r\n");
-        g_bt_config_state = BT_CFG_STATE_COMPLETE;
-        // 打印一下状态
-        Debug_Printf("BTCFST:%d\r\n", g_bt_config_state);
     }
 }
 
