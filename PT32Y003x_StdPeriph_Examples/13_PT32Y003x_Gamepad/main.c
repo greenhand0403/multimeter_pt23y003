@@ -18,7 +18,7 @@ uint8_t BLE_NAME_LEGAL = 0;
 // 模式一代表按键舵机模式，当触发按键中断时记录发送标志位，发送完按键数据后清除标志位
 // 模式二代表陀螺仪模式，当触发定时器中断 (每20ms) 时记录发送标志位，发送完陀螺仪数据后清除标志位
 volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
-
+volatile work_mode_t g_work_mode_prev = WORK_MODE_IDLE;
 extern uint16_t rx_buffer[64];
 extern uint8_t rx_index;
 extern volatile uint8_t g_rx_line_complete;
@@ -29,6 +29,7 @@ extern volatile uint8_t rx_ring[128];
 #define LINE_BUF_SIZE 128
 char line_buf[LINE_BUF_SIZE];
 uint16_t line_len = 0;
+extern uint32_t last_activity_time;
 
 // ===== 外部函数声明 =====
 extern void led_init(void);
@@ -39,6 +40,7 @@ extern void led_update(void);
 
 extern void button_init(void);
 extern uint8_t button_get_state(void);
+
 extern void button_check_wakeup(void);
 
 extern void servo_init(void);
@@ -49,10 +51,13 @@ extern void bluetooth_send_packet(protocol_packet_t* packet);
 extern void bluetooth_check_connection(void);
 extern uint8_t bluetooth_check_sleep_timeout(void);
 extern void bluetooth_configure_name_start(void);
+extern void bluetooth_send_first_connect_packet(void);
 // ===== 处理蓝牙响应 =====
 extern void ProcessBluetoothResponse(const char *line);
 
 extern void gyro_init(void);
+extern void request_gyro_data(void);
+extern void send_gyro_data_packet(void);
 
 #pragma region 串口格式化输出辅助函数
 // 向指定UART发送字符串
@@ -222,7 +227,10 @@ void send_key_status_packet(void)
     
     bluetooth_send_packet(&packet);
 }
-
+void send_gyro_data_packet(void)
+{
+    // 暂时空实现（后续补充I2C+MPU6050数据读取+打包发送）
+}
 // ===== 休眠功能 =====
 void enter_sleep_mode(void)
 {
@@ -304,13 +312,95 @@ int main(void)
         bluetooth_configure_name_start();
     }
     Debug_Printf("BLE NAME OK\r\n");
-    // TODO: 测试，走到这里说明前面的蓝牙名称判断逻辑已经走通
-    led_set_on();
-    // 状态机二，判断蓝牙是否连接，然后进入模式一或模式二的工作中
-    
-    // 等待直到蓝牙指令查询返回正确格式的蓝牙名称 ONBOTS-XXXX
     while (1)
     {
+        // LED控制：连接时能读到PD3高电平，同时将外部LED也设置为高电平
+        if (GPIO_ReadDataBit(BT_CONNECT_LED_PIN)==1) {
+            if (g_bt_state==BT_STATE_DISCONNECTED)
+            {
+                led_set_on();      // 连接后常亮
+                g_bt_state = BT_STATE_CONNECTED;
+                // TEST: 发送第一条手柄上线的消息
+                bluetooth_send_first_connect_packet();
+                g_work_mode_prev = WORK_MODE_IDLE;
+            }
+            // 进入内部工作循环
+            else
+            {
+                /*
+                    模式1：
+                    PA3悬空：蓝牙手柄发射+蓝牙接收控制器
+                    当手柄使用时，按下每个键发对应蓝牙指令，按住不放连续发射（发射间隔20ms），每个键独立IO，可同时识别多键按下。
+                    同时还可当蓝牙接收控制器使用：
+                    PB4：一路IO输出信号，根据接收的指令输出对应的高低电平信号或PWM信号。
+                    PB5: 接舵机SG90控制端，mcu端实现舵机驱动，根据接收的指令控制舵机转动对应角度。
+                    
+                    模式2：
+                    PA3接GND: 蓝牙体感控制器
+                    PB4与PB5设置为I2C接口，外接陀螺仪MPU6500，可用mcu自带的硬件I2C接口，也可软件模拟I2C。用手翻转手柄，发射陀螺仪3轴角度数据，发射间隔20ms
+                */
+                g_work_mode = detect_work_mode();
+                // 首次进入工作模式或者检测到工作模式切换，需要初始化
+                if (g_work_mode_prev==WORK_MODE_IDLE)
+                {
+                    if (g_work_mode == WORK_MODE_1_SERVO) {
+                        // 初始化按键舵机接口
+                        servo_init();
+                        button_init();
+                    } else if (g_work_mode == WORK_MODE_2_GYRO) {
+                        // 初始化陀螺仪I2C接口
+                        gyro_init();
+                    }
+                    g_work_mode_prev = g_work_mode;
+                }
+                // 工作模式已初始化，继续处理后续业务逻辑
+                if (g_work_mode == g_work_mode_prev)
+                {
+                    if (g_work_mode == WORK_MODE_1_SERVO) {
+                        // TODO: 扫描按键状态，填到数据包里面
+                        button_get_state();
+                        // 每20ms发送一次按键舵机数据包
+                        if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
+                            send_key_status_packet();
+                            g_last_packet_time = s_ms_ticks;
+                        }
+                    } else if (g_work_mode == WORK_MODE_2_GYRO) {
+                        // 请求陀螺仪数据，填到数据包里
+                        request_gyro_data();
+                        // 每20ms发送一次陀螺仪数据包
+                        if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
+                            send_gyro_data_packet();
+                            g_last_packet_time = s_ms_ticks;
+                        }
+                    }
+                }
+                else
+                {
+                    g_work_mode_prev = WORK_MODE_IDLE;
+                }
+            }
+            
+        }
+        else
+        {
+            // 刚进入未连接状态，则记录状态和时间
+            if (g_bt_state==BT_STATE_CONNECTED)
+            {
+                led_set_blink_fast(); // 断开蓝牙连接后，LED快闪
+                g_bt_state = BT_STATE_DISCONNECTED;
+                last_activity_time = s_ms_ticks;
+            }
+            // 如果未连接持续到120秒，则进入休眠模式
+            if (s_ms_ticks - last_activity_time >= AUTO_SLEEP_TIMEOUT_MS)
+            {
+                enter_sleep_mode();
+                // TODO: 休眠唤醒后，要重新发送蓝牙手柄上线的第一个数据包
+            }
+        }
+        
+        // TODO: 处理主机发送给蓝牙手柄的数据包
+        // PollAndProcessUARTLines();
+
         // 接收蓝牙模块发送到串口0的数据，转发到串口1调试
         // while(rx_index)
         // {
@@ -321,63 +411,11 @@ int main(void)
         //         rx_index=0;
         //     }
         // }
-    }
-    
-    // 由 MCU读 PD3 持续判断蓝牙连接状态，若无连接，120秒自动低功耗休眠
-    // 进入休眠时开启外部按键中断，用于检测按键唤醒
-    // MCU 持续持续判断蓝牙连接状态，直到主机连接蓝牙模块，然后MCU取消自动休眠，并发送首包确认连接
-    // send_connect_packet();
-#if 0
-    while (1)
-    {
-        // TODO: 工作主循环，先检查有没有初始化工作状态，需要额外一个的变量来记录一个工作模式是否初始化完成，当用户在使用过程中切换到新的工作模式时，就重新初始化工作状态并再次记录
-        
-        // 检测工作模式
-        g_work_mode = detect_work_mode();
-
-        // 根据模式初始化相应模块
-        if (g_work_mode == WORK_MODE_1_SERVO) {
-            servo_init();
-        } else if (g_work_mode == WORK_MODE_2_GYRO) {
-            gyro_init();
-        }
-
-        bluetooth_check_connection();
-        
-        // LED控制：严格按照设计文档
-        if (g_bt_state == BT_STATE_CONNECTED) {
-            led_set_on();      // 连接后常亮
-        } else {
-            led_set_blink_fast();  // 断开后快闪（唯一闪烁模式）
-        }
-        
-        // 获取按键状态
-        uint8_t new_key_state = button_get_state();
-        
-        // 数据发送逻辑
-        uint32_t current_time = s_ms_ticks;
-        if ((new_key_state != g_current_key_state) || 
-            (g_work_mode == WORK_MODE_2_GYRO && 
-             (current_time - g_last_packet_time) >= PACKET_SEND_INTERVAL_MS)) {
-            
-            g_current_key_state = new_key_state;
-            g_last_packet_time = current_time;
-            
-            if (g_bt_state == BT_STATE_CONNECTED) {
-                send_key_status_packet();
-            }
-        }
         
         led_update();
-        
-        // 检查休眠超时
-        if (bluetooth_check_sleep_timeout()) {
-            enter_sleep_mode();
-        }
-        
-        delay_ms(1);
+
+        delay_ms(5); // 小延迟
     }
-#endif
 }
 
 #ifdef  USE_FULL_ASSERT

@@ -5,5 +5,7 @@
 #include "system_config.h"
 
 void gyro_init(void);
+void request_gyro_data(void);
+// void send_gyro_data_packet(void);
 
 #endif

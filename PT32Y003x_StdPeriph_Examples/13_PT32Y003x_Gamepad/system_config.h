@@ -57,7 +57,7 @@ typedef struct {
     uint8_t header_h;      // 头码高字节
     uint8_t header_l;      // 头码低字节
     uint8_t cmd_type;      // 指令类型
-    uint8_t data[6];       // 指令数据
+    uint8_t data[6];       // 指令数据 发送是6字节，接收是2字节
     uint8_t seq_num;       // 指令流水号
     uint8_t crc_high;      // CRC高字节
     uint8_t crc_low;       // CRC低字节
@@ -79,6 +79,7 @@ typedef enum {
 
 // ===== 全局变量声明 =====
 extern volatile work_mode_t g_work_mode;
+extern volatile work_mode_t g_work_mode_prev;
 // 蓝牙状态连接与否，在蓝牙驱动头文件定义和初始化
 extern volatile bluetooth_state_t g_bt_state;
 

@@ -12,13 +12,13 @@ typedef enum {
 volatile bluetooth_state_t g_bt_state = BT_STATE_DISCONNECTED;
 volatile bt_config_state_t g_bt_config_state = BT_CFG_STATE_IDLE;
 volatile uint8_t g_bt_config_complete = 0;
-// static uint32_t last_activity_time = 0;
+uint32_t last_activity_time = 0; // 记录最早一次未连接蓝牙的时间戳，用于两分钟未连接则进入休眠模式
 static uint8_t mac_address[6] = {0}; // 存储MAC地址
 
 // 蓝牙名称检测
 uint8_t Legal_Name = 0;
 // 保存蓝牙地址后两字节
-uint8_t Legal_MAC[4] = {0};
+uint8_t Legal_MAC[2] = {0x8F, 0x2E};
 
 // 给串口重点关注的变量
 uint16_t rx_buffer[64] = {0};
@@ -31,6 +31,7 @@ void bluetooth_send_at_command(const char* command);
 void bluetooth_init(void);
 void bluetooth_configure_name_start(void);  // 启动配置流程
 void ProcessBluetoothResponse(const char* line);
+void bluetooth_send_first_connect_packet(void);
 // bt_config_state_t get_bt_config_state(void);
 // void bluetooth_check_connection(void);
 // uint8_t bluetooth_check_sleep_timeout(void);

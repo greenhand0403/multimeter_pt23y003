@@ -38,10 +38,6 @@ void bluetooth_send_packet(protocol_packet_t* packet)
 {
     uint8_t* buffer = (uint8_t*)packet;
     bluetooth_send_raw_data(buffer, sizeof(protocol_packet_t));
-    
-    if (g_bt_state == BT_STATE_DISCONNECTED) {
-        g_bt_state = BT_STATE_CONNECTED;
-    }
 }
 
 // ===== 发送AT命令 =====
@@ -92,6 +88,7 @@ void bluetooth_configure_name_start(void)
         // 开始查询当前名称
         bluetooth_send_at_command("AT+TM\r\n");
     }
+    // bluetooth_send_at_command("AT+CW\r\n");// 测试代码重置蓝牙
 }
 // 处理传入的一行（不含 \r\n），例如 "OK"、"AT+BMONBOTS-1024"、"TB+CF7FA6F77DAE"
 void ProcessBluetoothResponse(const char* line)
@@ -171,6 +168,10 @@ void ProcessBluetoothResponse(const char* line)
                     p[1] = *(start + 3); // 第4个字符
                     p[2] = *(start + 0); // 第1个字符
                     p[3] = *(start + 1); // 第2个字符
+
+                    Legal_MAC[0]=p[0]<<8|p[1];
+                    Legal_MAC[1]=p[2]<<8|p[3];
+
                     p += 4;
 
                     p[0] = '\r';
@@ -178,7 +179,7 @@ void ProcessBluetoothResponse(const char* line)
                     p += 2;
                     *p = '\0';
 
-                    Debug_Printf("setname:%s", new_name);
+                    Debug_Printf("setname:%s,mac:%04x%04x\r\n", new_name,Legal_MAC[0],Legal_MAC[1]);
 
                     // 发送设置名称命令
                     bluetooth_send_at_command(new_name);
@@ -193,6 +194,30 @@ void ProcessBluetoothResponse(const char* line)
     }
 }
 
+void bluetooth_send_first_connect_packet(void)
+{
+    protocol_packet_t packet;
+    packet.header_h = PROTOCOL_HEADER_H;
+    packet.header_l = PROTOCOL_HEADER_L;
+    packet.cmd_type = CMD_TYPE_CONNECT;
+    packet.data[0] = Legal_MAC[0];
+    packet.data[1] = Legal_MAC[1];
+    packet.data[2] = 0;
+    packet.data[3] = 0;
+    packet.data[4] = 0;
+    packet.data[5] = 0;
+    packet.seq_num = g_seq_num++;
+    // 检验和
+    uint16_t crc = packet.cmd_type + (packet.data[0] + packet.data[1] + 
+        packet.data[2] + packet.data[3] + packet.data[4] + 
+        packet.data[5]) + packet.seq_num;
+        
+    packet.crc_high = (uint8_t)(crc >> 8);
+    packet.crc_low = (uint8_t)(crc & 0xFF);
+    packet.tail_h = PROTOCOL_TAIL_H;
+    packet.tail_l = PROTOCOL_TAIL_L;
+    bluetooth_send_packet(&packet);
+}
 // 2分钟无连接休眠的逻辑应该在LED驱动处负责休眠
 // ===== 检查连接状态 =====
 // void bluetooth_check_connection(void)
