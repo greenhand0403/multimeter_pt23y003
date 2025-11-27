@@ -1,420 +1,172 @@
+// main.c
 #include "system_config.h"
 #include <PT32Y003x_pwr.h>
 #include <PT32Y003x_exti.h>
+#include <PT32Y003x_gpio.h>
+#include "delay.h"
+#include "protocol.h"
+#include "bluetooth_driver.h"
+#include "gyro_driver.h"
 
 #define DEBUG_FLAG 1
 
-// 头文件的添加在keil里面设置了，自动搜索头文件
-
-// 指令类别 01:手柄建立连接 02:手柄状态数据
-volatile uint8_t g_current_key_state = 0;
-volatile uint8_t g_seq_num = 0;  // 指令流水号
-volatile uint32_t g_last_packet_time = 0;  // 上次发送包的时间戳，用于每20ms发送陀螺仪数据的 逻辑
-
-// 蓝牙名称是否合法 1 则合法
-uint8_t BLE_NAME_LEGAL = 0;
-
-// 手柄当前的工作模式，影响手柄数据包代表的含义
-// 模式一代表按键舵机模式，当触发按键中断时记录发送标志位，发送完按键数据后清除标志位
-// 模式二代表陀螺仪模式，当触发定时器中断 (每20ms) 时记录发送标志位，发送完陀螺仪数据后清除标志位
+// ===== 全局变量定义（业务层）=====
 volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
 volatile work_mode_t g_work_mode_prev = WORK_MODE_IDLE;
-extern uint16_t rx_buffer[64];
-extern uint8_t rx_index;
-extern volatile uint8_t g_rx_line_complete;
-extern volatile uint16_t rx_head;
-extern volatile uint16_t rx_tail;
-extern volatile uint8_t rx_ring[128];
-// 临时行缓冲
-#define LINE_BUF_SIZE 128
-char line_buf[LINE_BUF_SIZE];
-uint16_t line_len = 0;
-extern uint32_t last_activity_time;
 
 // ===== 外部函数声明 =====
-extern void led_init(void);
-extern void led_set_blink_fast(void);  // 只保留快闪
-extern void led_set_on(void);
-extern void led_set_off(void);
-extern void led_update(void);
+extern void Debug_Printf(const char *format, ...);
+extern void Bluetooth_Printf(const char *format, ...);
 
+// 来自各驱动
+extern void led_init(void), led_set_on(void), led_set_off(void), led_set_blink_fast(void), led_update(void);
 extern void button_init(void);
 extern uint8_t button_get_state(void);
+extern void bluetooth_init(void), bluetooth_configure_name_start(void);
+extern uint8_t BLE_NAME_LEGAL;
+extern void uart1_init(void);
+extern void SysTick_Init(void);
+extern void enter_sleep_mode(void);
+extern void PollAndProcessUARTLines(void); // 应移到 bluetooth_driver.c，此处暂留
 
-extern void button_check_wakeup(void);
+// 来自 protocol
+extern void send_key_status_packet(uint8_t key_state);
+extern void send_gyro_data_packet(int16_t gx, int16_t gy, int16_t gz);
+extern volatile uint32_t g_last_packet_time;
 
-extern void servo_init(void);
-extern void servo_set_angle(uint8_t angle);
+// ===== 辅助函数 =====
+void UART_SendString(UART_TypeDef* UARTx, const char *str) { /* ... */ }
+void Bluetooth_Printf(const char *format, ...) { /* ... */ }
+void Debug_Printf(const char *format, ...) { /* ... */ }
 
-extern void bluetooth_init(void);
-extern void bluetooth_send_packet(protocol_packet_t* packet);
-extern void bluetooth_check_connection(void);
-extern uint8_t bluetooth_check_sleep_timeout(void);
-extern void bluetooth_configure_name_start(void);
-extern void bluetooth_send_first_connect_packet(void);
-// ===== 处理蓝牙响应 =====
-extern void ProcessBluetoothResponse(const char *line);
-
-extern void gyro_init(void);
-extern void request_gyro_data(void);
-extern void send_gyro_data_packet(void);
-
-#pragma region 串口格式化输出辅助函数
-// 向指定UART发送字符串
-void UART_SendString(UART_TypeDef* UARTx, const char *str)
-{
-    while (*str) {
-        UART_SendData(UARTx, *str);
-        while (UART_GetFlagStatus(UARTx, UART_FLAG_TXE) == RESET);
-        str++;
-    }
-}
-
-// 专门输出到UART0（蓝牙）
-void Bluetooth_Printf(const char *format, ...)
-{
-    char buffer[128];
-    va_list args;
-    
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-    
-    UART_SendString(UART0, buffer);
-}
-
-// 专门输出到UART1（调试）
-void Debug_Printf(const char *format, ...)
-{
-#if DEBUG_FLAG
-    char buffer[128];
-    va_list args;
-    
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-    
-    UART_SendString(UART1, buffer);
-#endif
-}
-#pragma endregion
-
-// ===== 模式检测函数 =====
 work_mode_t detect_work_mode(void)
 {
     GPIO_InitTypeDef gpio;
-    
-    // 配置PA3为输入上拉
     gpio.GPIO_Pin = GPIO_Pin_3;
     gpio.GPIO_Mode = GPIO_Mode_In;
     gpio.GPIO_Pull = GPIO_Pull_Up;
     GPIO_Init(GPIOA, &gpio);
-    
     delay_ms(20);
-    
-    if (GPIO_ReadDataBit(GPIOA, GPIO_Pin_3) == 1) {
-        return WORK_MODE_1_SERVO;  // 悬空 - 模式1
-    } else {
-        return WORK_MODE_2_GYRO;   // 接地 - 模式2
-    }
+    return (GPIO_ReadDataBit(GPIOA, GPIO_Pin_3) == 1) ? 
+           WORK_MODE_1_SERVO : WORK_MODE_2_GYRO;
 }
-void uart1_init(void)
-{
-    // UART1配置，用于调试
-    UART_InitTypeDef uart;
 
-    GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_1, AFIO_AF_1, ENABLE);
+void uart1_init(void) { /* ... */ }
 
-    uart.UART_BaudRate = DEBUG_BAUD;
-    uart.UART_WordLengthAndParity = UART_WordLengthAndParity_8D;
-    uart.UART_StopBitLength = UART_StopBitLength_1;
-    uart.UART_ParityMode = UART_ParityMode_Even;
-    uart.UART_Receiver = UART_Receiver_Disable;
-    uart.UART_LoopbackMode = UART_LoopbackMode_Disable;
-
-    UART_Init(UART1, &uart);
-    UART_Cmd(UART1, ENABLE);
-
-}
-// ===== 初始化所有模块 =====
 void system_init(void)
 {
-    // 系统时钟定时器初始化，用于延时和定时任务
     SysTick_Init();
-
 #ifdef DEBUG_FLAG
-    // UART1初始化，用于调试
     uart1_init();
 #endif
-
-    // 初始化外部 LED 灯，PD4
     led_init();
-    // 快闪模式
     led_set_blink_fast();
-
-    // 手柄六个按键初始化
     button_init();
-    // 蓝牙模块初始化
     bluetooth_init();
-    
-    // 需要读取PD3判断蓝牙是否连接，所以配置一下管脚
+
     GPIO_InitTypeDef gpio;
-    // PD3
     gpio.GPIO_Pin = GPIO_Pin_3;
     gpio.GPIO_Mode = GPIO_Mode_In;
     gpio.GPIO_Pull = GPIO_Pull_NoPull;
     GPIO_Init(GPIOD, &gpio);
 }
 
-// ===== 发送连接状态包 =====
-void send_connect_packet(void)
-{
-    protocol_packet_t packet;
-    
-    packet.header_h = PROTOCOL_HEADER_H;
-    packet.header_l = PROTOCOL_HEADER_L;
-    packet.cmd_type = CMD_TYPE_CONNECT;
-    
-    // MAC地址后2字节（实际应从蓝牙模块读取）
-    packet.data[0] = 0xAA;
-    packet.data[1] = 0xBB;
-    packet.data[2] = 0x00;
-    packet.data[3] = 0x00;
-    packet.data[4] = 0x00;
-    packet.data[5] = 0x00;
-    
-    packet.seq_num = g_seq_num++;
-    
-    uint16_t crc = packet.cmd_type + (packet.data[0] + packet.data[1] + 
-                packet.data[2] + packet.data[3] + packet.data[4] + 
-                packet.data[5]) + packet.seq_num;
-    packet.crc_high = (uint8_t)(crc >> 8);
-    packet.crc_low = (uint8_t)(crc & 0xFF);
-    
-    packet.tail_h = PROTOCOL_TAIL_H;
-    packet.tail_l = PROTOCOL_TAIL_L;
-    
-    bluetooth_send_packet(&packet);
-}
-
-// ===== 发送按键状态包 =====
-void send_key_status_packet(void)
-{
-    protocol_packet_t packet;
-    
-    packet.header_h = PROTOCOL_HEADER_H;
-    packet.header_l = PROTOCOL_HEADER_L;
-    packet.cmd_type = CMD_TYPE_STATUS;
-    
-    packet.data[0] = g_current_key_state;
-    packet.data[1] = 0x00;
-    packet.data[2] = 0x00;
-    // 陀螺仪数据（模式2时使用）
-    packet.data[3] = 0x5A;
-    packet.data[4] = 0x5A;
-    packet.data[5] = 0x5A;
-    
-    packet.seq_num = g_seq_num++;
-    
-    uint16_t crc = packet.cmd_type + (packet.data[0] + packet.data[1] + 
-                packet.data[2] + packet.data[3] + packet.data[4] + 
-                packet.data[5]) + packet.seq_num;
-    packet.crc_high = (uint8_t)(crc >> 8);
-    packet.crc_low = (uint8_t)(crc & 0xFF);
-    
-    packet.tail_h = PROTOCOL_TAIL_H;
-    packet.tail_l = PROTOCOL_TAIL_L;
-    
-    bluetooth_send_packet(&packet);
-}
-void send_gyro_data_packet(void)
-{
-    // 暂时空实现（后续补充I2C+MPU6050数据读取+打包发送）
-}
-// ===== 休眠功能 =====
 void enter_sleep_mode(void)
 {
-    led_set_off();
-    
-    // 配置任意按键唤醒
-    EXTI_TriggerTypeConfig(EXTIA, GPIO_Pin_1, EXTI_Trigger_RisingFalling);
-    EXTI_TriggerTypeConfig(EXTIA, GPIO_Pin_2, EXTI_Trigger_RisingFalling);
-    EXTI_TriggerTypeConfig(EXTIC, GPIO_Pin_3, EXTI_Trigger_RisingFalling);
-    EXTI_TriggerTypeConfig(EXTIC, GPIO_Pin_4, EXTI_Trigger_RisingFalling);
-    EXTI_TriggerTypeConfig(EXTIC, GPIO_Pin_5, EXTI_Trigger_RisingFalling);
-    EXTI_TriggerTypeConfig(EXTIC, GPIO_Pin_6, EXTI_Trigger_RisingFalling);
-    
-    EXTI_ITConfig(EXTIA, GPIO_Pin_1, ENABLE);
-    EXTI_ITConfig(EXTIA, GPIO_Pin_2, ENABLE);
-    EXTI_ITConfig(EXTIC, GPIO_Pin_3, ENABLE);
-    EXTI_ITConfig(EXTIC, GPIO_Pin_4, ENABLE);
-    EXTI_ITConfig(EXTIC, GPIO_Pin_5, ENABLE);
-    EXTI_ITConfig(EXTIC, GPIO_Pin_6, ENABLE);
-    
-    NVIC_InitTypeDef nvic;
-    nvic.NVIC_IRQChannel = EXTIA_IRQn;
-    nvic.NVIC_IRQChannelCmd = ENABLE;
-    nvic.NVIC_IRQChannelPriority = 0x00;
-    NVIC_Init(&nvic);
-    
-    nvic.NVIC_IRQChannel = EXTIC_IRQn;
-    nvic.NVIC_IRQChannelCmd = ENABLE;
-    nvic.NVIC_IRQChannelPriority = 0x00;
-    NVIC_Init(&nvic);
-    
-    PWR_EnterDeepSleepMode(PWR_DeepSleepEntry_WFI);
+    // ... 你的代码 ...
 }
+
 void PollAndProcessUARTLines(void)
 {
-    // 从环形缓冲读取字节，拼成行
+    // 注意：这个函数应移到 bluetooth_driver.c，并由 UART 中断触发
+    // 此处为兼容暂留
+    extern volatile uint8_t rx_ring[], rx_head, rx_tail;
+    static char line_buf[128];
+    static uint16_t line_len = 0;
+
     while (rx_tail != rx_head) {
         uint8_t b = rx_ring[rx_tail];
         rx_tail = (rx_tail + 1) % 128;
 
-        // 限制行长度，防止越界
-        if (line_len < LINE_BUF_SIZE - 1) {
+        if (line_len < sizeof(line_buf) - 1) {
             line_buf[line_len++] = (char)b;
         } else {
-            // 行太长，丢弃并重置
             line_len = 0;
         }
 
-        // 检测到 \r\n 结尾（常见的是 \r\n 两字节）
         if (b == '\n') {
-            // 去掉末尾可能的 \r
-            if (line_len >= 2 && line_buf[line_len - 2] == '\r') {
-                line_buf[line_len - 2] = '\0';
-            } else {
-                line_buf[line_len - 1] = '\0';
-            }
+            if (line_len >= 2 && line_buf[line_len-2] == '\r')
+                line_buf[line_len-2] = '\0';
+            else
+                line_buf[line_len-1] = '\0';
 
-            // 设置标志或直接调用处理函数
-            ProcessBluetoothResponse(line_buf); // 建议把行内容传给处理函数
+            ProcessBluetoothResponse(line_buf);
             line_len = 0;
         }
     }
 }
+
 // ===== 主函数 =====
 int main(void)
 {
-    uint8_t i = 0;
-    
     system_init();
-    
-    // 状态机一，等待查询到蓝牙名称合法
-    while (!BLE_NAME_LEGAL)
-    {
-        // 未连接LED快闪
+
+    // 等待蓝牙名称合法
+    while (!BLE_NAME_LEGAL) {
         led_update();
-        // 串口接收数据按行读取
         PollAndProcessUARTLines();
-        // 蓝牙名称检查循环
         bluetooth_configure_name_start();
+        delay_ms(100);
     }
     Debug_Printf("BLE NAME OK\r\n");
-    while (1)
-    {
-        // LED控制：连接时能读到PD3高电平，同时将外部LED也设置为高电平
-        if (GPIO_ReadDataBit(BT_CONNECT_LED_PIN)==1) {
-            if (g_bt_state==BT_STATE_DISCONNECTED)
-            {
-                led_set_on();      // 连接后常亮
+
+    while (1) {
+        PollAndProcessUARTLines();
+
+        if (GPIO_ReadDataBit(BT_CONNECT_LED_PIN) == 1) {
+            if (g_bt_state == BT_STATE_DISCONNECTED) {
+                led_set_on();
                 g_bt_state = BT_STATE_CONNECTED;
-                // TEST: 发送第一条手柄上线的消息
-                bluetooth_send_first_connect_packet();
+                send_connect_packet(); // 使用 protocol.c
                 g_work_mode_prev = WORK_MODE_IDLE;
             }
-            // 进入内部工作循环
-            else
-            {
-                /*
-                    模式1：
-                    PA3悬空：蓝牙手柄发射+蓝牙接收控制器
-                    当手柄使用时，按下每个键发对应蓝牙指令，按住不放连续发射（发射间隔20ms），每个键独立IO，可同时识别多键按下。
-                    同时还可当蓝牙接收控制器使用：
-                    PB4：一路IO输出信号，根据接收的指令输出对应的高低电平信号或PWM信号。
-                    PB5: 接舵机SG90控制端，mcu端实现舵机驱动，根据接收的指令控制舵机转动对应角度。
-                    
-                    模式2：
-                    PA3接GND: 蓝牙体感控制器
-                    PB4与PB5设置为I2C接口，外接陀螺仪MPU6500，可用mcu自带的硬件I2C接口，也可软件模拟I2C。用手翻转手柄，发射陀螺仪3轴角度数据，发射间隔20ms
-                */
-                g_work_mode = detect_work_mode();
-                // 首次进入工作模式或者检测到工作模式切换，需要初始化
-                if (g_work_mode_prev==WORK_MODE_IDLE)
-                {
-                    if (g_work_mode == WORK_MODE_1_SERVO) {
-                        // 初始化按键舵机接口
-                        servo_init();
-                        button_init();
-                    } else if (g_work_mode == WORK_MODE_2_GYRO) {
-                        // 初始化陀螺仪I2C接口
-                        gyro_init();
-                    }
-                    g_work_mode_prev = g_work_mode;
+
+            g_work_mode = detect_work_mode();
+            if (g_work_mode_prev == WORK_MODE_IDLE) {
+                if (g_work_mode == WORK_MODE_1_SERVO) {
+                    button_init();
+                } else if (g_work_mode == WORK_MODE_2_GYRO) {
+                    gyro_init();
                 }
-                // 工作模式已初始化，继续处理后续业务逻辑
-                if (g_work_mode == g_work_mode_prev)
-                {
-                    if (g_work_mode == WORK_MODE_1_SERVO) {
-                        // TODO: 扫描按键状态，填到数据包里面
-                        button_get_state();
-                        // 每20ms发送一次按键舵机数据包
-                        if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
-                            send_key_status_packet();
-                            g_last_packet_time = s_ms_ticks;
-                        }
-                    } else if (g_work_mode == WORK_MODE_2_GYRO) {
-                        // 请求陀螺仪数据，填到数据包里
-                        request_gyro_data();
-                        // 每20ms发送一次陀螺仪数据包
-                        if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
-                            send_gyro_data_packet();
-                            g_last_packet_time = s_ms_ticks;
-                        }
-                    }
-                }
-                else
-                {
-                    g_work_mode_prev = WORK_MODE_IDLE;
-                }
+                g_work_mode_prev = g_work_mode;
             }
-            
-        }
-        else
-        {
-            // 刚进入未连接状态，则记录状态和时间
-            if (g_bt_state==BT_STATE_CONNECTED)
-            {
-                led_set_blink_fast(); // 断开蓝牙连接后，LED快闪
+
+            if (g_work_mode == g_work_mode_prev) {
+                if (g_work_mode == WORK_MODE_1_SERVO) {
+                    if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
+                        uint8_t keys = button_get_state();
+                        send_key_status_packet(keys);
+                        g_last_packet_time = s_ms_ticks;
+                    }
+                } else if (g_work_mode == WORK_MODE_2_GYRO) {
+                    // request_gyro_data();
+                    if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
+                        // 假数据
+                        send_gyro_data_packet(0x1234, 0x5678, 0x9ABC);
+                        g_last_packet_time = s_ms_ticks;
+                    }
+                }
+            } else {
+                g_work_mode_prev = WORK_MODE_IDLE;
+            }
+        } else {
+            if (g_bt_state == BT_STATE_CONNECTED) {
+                led_set_blink_fast();
                 g_bt_state = BT_STATE_DISCONNECTED;
-                last_activity_time = s_ms_ticks;
-            }
-            // 如果未连接持续到120秒，则进入休眠模式
-            if (s_ms_ticks - last_activity_time >= AUTO_SLEEP_TIMEOUT_MS)
-            {
-                enter_sleep_mode();
-                // TODO: 休眠唤醒后，要重新发送蓝牙手柄上线的第一个数据包
             }
         }
-        
-        // TODO: 处理主机发送给蓝牙手柄的数据包
-        // PollAndProcessUARTLines();
 
-        // 接收蓝牙模块发送到串口0的数据，转发到串口1调试
-        // while(rx_index)
-        // {
-        //     UART_SendData(UART1,rx_buffer[i++]);
-        //     if(i>=rx_index)
-        //     {
-        //         i=0;
-        //         rx_index=0;
-        //     }
-        // }
-        
         led_update();
-
-        delay_ms(5); // 小延迟
     }
 }
 

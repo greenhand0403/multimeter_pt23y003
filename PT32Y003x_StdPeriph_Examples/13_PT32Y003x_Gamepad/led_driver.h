@@ -1,14 +1,15 @@
+// led_driver.h
+#ifndef LED_DRIVER_H
+#define LED_DRIVER_H
+
 #include "system_config.h"
 
-#define BLINK_FAST_INTERVAL_MS 200     // LEDµ∆øÏ…¡º‰∏Ù
-
-static uint32_t last_blink_time = 0;
-static uint8_t led_state = 0;  // 0=off, 1=on
-static uint8_t blink_mode = 0; // 0=off, 1=fast
-static uint32_t blink_interval = BLINK_FAST_INTERVAL_MS;
+#define BLINK_FAST_INTERVAL_MS 200
 
 void led_init(void);
 void led_set_on(void);
 void led_set_off(void);
 void led_set_blink_fast(void);
 void led_update(void);
+
+#endif

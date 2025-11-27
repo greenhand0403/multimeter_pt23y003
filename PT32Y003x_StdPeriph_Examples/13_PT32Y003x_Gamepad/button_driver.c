@@ -1,33 +1,37 @@
 // button_driver.c
 #include "button_driver.h"
+#include <PT32Y003x_gpio.h>
+
+#define KEY_UP    GPIO_ReadDataBit(GPIOA, GPIO_Pin_1)
+#define KEY_DOWN  GPIO_ReadDataBit(GPIOA, GPIO_Pin_2)
+#define KEY_LEFT  GPIO_ReadDataBit(GPIOC, GPIO_Pin_3)
+#define KEY_RIGHT GPIO_ReadDataBit(GPIOC, GPIO_Pin_4)
+#define KEY_A     GPIO_ReadDataBit(GPIOC, GPIO_Pin_5)
+#define KEY_B     GPIO_ReadDataBit(GPIOC, GPIO_Pin_6)
 
 void button_init(void)
 {
-    // 配置所有按键引脚为输入上拉（低电平有效）
     GPIO_InitTypeDef gpio;
     
-    // PA1, PA2
     gpio.GPIO_Pin = GPIO_Pin_1 | GPIO_Pin_2;
     gpio.GPIO_Mode = GPIO_Mode_In;
     gpio.GPIO_Pull = GPIO_Pull_Up;
     GPIO_Init(GPIOA, &gpio);
     
-    // PC3~PC6
     gpio.GPIO_Pin = GPIO_Pin_3 | GPIO_Pin_4 | GPIO_Pin_5 | GPIO_Pin_6;
     gpio.GPIO_Mode = GPIO_Mode_In;
     gpio.GPIO_Pull = GPIO_Pull_Up;
     GPIO_Init(GPIOC, &gpio);
 }
 
-// 返回一个字节，每位代表一个按键状态（1=按下）
 uint8_t button_get_state(void)
 {
     uint8_t state = 0;
-    if (KEY_UP == KEY_PRESSED)     state |= (1 << 0);  // UP
-    if (KEY_DOWN == KEY_PRESSED)   state |= (1 << 1);  // DOWN
-    if (KEY_LEFT == KEY_PRESSED)   state |= (1 << 2);  // LEFT
-    if (KEY_RIGHT == KEY_PRESSED)  state |= (1 << 3);  // RIGHT
-    if (KEY_A == KEY_PRESSED)      state |= (1 << 4);  // A
-    if (KEY_B == KEY_PRESSED)      state |= (1 << 5);  // B
+    if (KEY_UP == KEY_PRESSED)     state |= (1 << 0);
+    if (KEY_DOWN == KEY_PRESSED)   state |= (1 << 1);
+    if (KEY_LEFT == KEY_PRESSED)   state |= (1 << 2);
+    if (KEY_RIGHT == KEY_PRESSED)  state |= (1 << 3);
+    if (KEY_A == KEY_PRESSED)      state |= (1 << 4);
+    if (KEY_B == KEY_PRESSED)      state |= (1 << 5);
     return state;
 }
