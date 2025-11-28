@@ -5,7 +5,9 @@
 // 蓝牙名称是否合法 1 则合法
 uint8_t BLE_NAME_LEGAL = 0;
 extern uint8_t Legal_MAC[2];
-
+// 记录上次活动时间，用于判断是否120秒未连接超时
+extern uint32_t last_activity_time;
+extern volatile uint32_t g_last_packet_time;  // 上次发送包的时间戳，用于每20ms发送陀螺仪数据的 逻辑
 // 手柄当前的工作模式，影响手柄数据包代表的含义
 // 模式一代表按键舵机模式，当触发按键中断时记录发送标志位，发送完按键数据后清除标志位
 // 模式二代表陀螺仪模式，当触发定时器中断 (每20ms) 时记录发送标志位，发送完陀螺仪数据后清除标志位
@@ -32,6 +34,8 @@ extern void button_init(void);
 extern void bluetooth_init(void);
 
 extern void bluetooth_configure_name_start(void);
+// ===== 发送首个手柄上线数据包 =====
+extern void bluetooth_send_first_connect_packet(void);
 
 // ===== 处理蓝牙响应 =====
 extern void ProcessBluetoothResponse(const char *line);
@@ -46,29 +50,6 @@ void UART_SendString(UART_TypeDef* UARTx, const char *str)
         str++;
     }
 }
-// 最简单的数字转字符串（仅正整数）
-// static void utoa_simple(unsigned int val, char *buf) {
-//     char tmp[12];
-//     int i = 0;
-//     if (val == 0) { buf[0] = '0'; buf[1] = '\0'; return; }
-//     while (val) {
-//         tmp[i++] = '0' + (val % 10);
-//         val /= 10;
-//     }
-//     int j;
-//     for (j = 0; j < i; ++j) buf[j] = tmp[i - 1 - j];
-//     buf[i] = '\0';
-// }
-
-// void UART_Printf_Simple(UART_TypeDef* UARTx, const char *str, unsigned int num) {
-//     // 仅示例：把 str 发出，再发 num 的字符串（用于替代格式化）
-//     UART_SendString(UARTx, str);
-//     char tmp[32];
-//     utoa_simple(num, tmp);
-//     UART_SendString(UARTx, tmp);
-//     UART_SendString(UARTx, "\r\n");
-// }
-
 #pragma endregion
 
 // ===== 模式检测函数 =====
@@ -215,7 +196,95 @@ int main(void)
         bluetooth_configure_name_start();
     }
     UART_SendString(UART1, "BLE NAME OK\r\n");
-    led_set_on();
+    // 记录离线时间
+    last_activity_time = s_ms_ticks;
+    while (1)
+    {
+        // 判断主机连接手柄
+        if (GPIO_ReadDataBit(BT_CONNECT_LED_PIN) == 1) 
+        {
+            // 主机刚开始连接上，未发送过连接包
+            if (g_bt_state == BT_STATE_DISCONNECTED) {
+                led_set_on();
+                g_bt_state = BT_STATE_CONNECTED;
+                // for (int k = 0; k < 2; k++)
+                {
+                    delay_ms(400);
+                    // 发送第一条上线消息
+                    bluetooth_send_first_connect_packet();
+                    // delay_ms(200);
+                }
+                UART_SendString(UART1, "FIRST CONNECT\r\n");
+                g_work_mode_prev = WORK_MODE_IDLE;
+            }
+            // 已连接，进行消息发送和处理
+            else
+            {
+                // 用户可能连接手柄后主动切换工作模式，所有需要每次都判断工作模式
+                g_work_mode = detect_work_mode();
+                // 首次进入工作模式或者检测到工作模式切换，需要初始化
+                if (g_work_mode_prev==WORK_MODE_IDLE)
+                {
+                    if (g_work_mode == WORK_MODE_1_SERVO) {
+                        // 初始化按键舵机接口
+                        // servo_init();
+                        // button_init();
+                    } else if (g_work_mode == WORK_MODE_2_GYRO) {
+                        // 初始化陀螺仪I2C接口
+                        // gyro_init();
+                    }
+                    g_work_mode_prev = g_work_mode;
+                }
+                // 工作模式已初始化，继续处理后续业务逻辑
+                if (g_work_mode == g_work_mode_prev)
+                {
+                    if (g_work_mode == WORK_MODE_1_SERVO) {
+                        // TODO: 扫描按键状态，填到数据包里面
+                        // button_get_state();
+                        // 每20ms发送一次按键舵机数据包
+                        if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
+                            // send_key_status_packet();
+                            g_last_packet_time = s_ms_ticks;
+                        }
+                    } else if (g_work_mode == WORK_MODE_2_GYRO) {
+                        // 请求陀螺仪数据，填到数据包里
+                        // request_gyro_data();
+                        // 每20ms发送一次陀螺仪数据包
+                        if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
+                            // send_gyro_data_packet();
+                            g_last_packet_time = s_ms_ticks;
+                        }
+                    }
+                }
+                else
+                {
+                    g_work_mode_prev = WORK_MODE_IDLE;
+                }
+
+                // TODO: 蓝牙消息处理
+                // 从环形缓冲读取字节，拼成行
+                PollAndProcessUARTLines();
+            }
+        }
+        // 未连接手柄
+        else
+        {
+            // 连接后主机断开蓝牙手柄
+            if (g_bt_state == BT_STATE_CONNECTED) {
+                led_set_blink_fast();
+                g_bt_state = BT_STATE_DISCONNECTED;
+                // 刷新主机掉线时间戳
+                last_activity_time = s_ms_ticks;
+            }
+            // 如果未连接持续120秒，则进入休眠模式
+            if (s_ms_ticks - last_activity_time >= AUTO_SLEEP_TIMEOUT_MS)
+            {
+                enter_sleep_mode();
+                // TODO: 休眠唤醒后，要重新发送蓝牙手柄上线的第一个数据包
+            }
+        }
+        led_update();
+    }
 }
 
 #ifdef  USE_FULL_ASSERT

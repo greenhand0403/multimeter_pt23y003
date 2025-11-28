@@ -17,14 +17,6 @@ static uint8_t hex_to_val(char c) {
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
     return 0; // 或者你可以做错误处理
 }
-/* hex 字符转 0..15，若非法返回 -1 */
-static inline int hex_char_to_nibble(char c)
-{
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    return -1;
-}
 
 // ===== 发送原始数据（用于AT命令）=====
 void bluetooth_send_raw_data(uint8_t* data, uint16_t len)
@@ -40,10 +32,6 @@ void bluetooth_send_packet(protocol_packet_t* packet)
 {
     uint8_t* buffer = (uint8_t*)packet;
     bluetooth_send_raw_data(buffer, sizeof(protocol_packet_t));
-    
-    if (g_bt_state == BT_STATE_DISCONNECTED) {
-        g_bt_state = BT_STATE_CONNECTED;
-    }
 }
 
 // ===== 发送AT命令 =====
@@ -88,7 +76,7 @@ void bluetooth_configure_name_start(void)
         // 开始查询当前名称
         bluetooth_send_at_command("AT+TM\r\n");
     }
-    // bluetooth_send_at_command("AT+CW\r\n");
+    // bluetooth_send_at_command("AT+CW\r\n"); // 蓝牙模块恢复出厂设置
 }
 // 处理传入的一行（不含 \r\n），例如 "OK"、"AT+BMONBOTS-1024"、"TB+CF7FA6F77DAE"
 void ProcessBluetoothResponse(const char* line)
@@ -134,7 +122,7 @@ void ProcessBluetoothResponse(const char* line)
             // 记录合法的 MAC 地址
             Legal_MAC[0] = (hex_to_val(name_suffix[0]) << 4) | hex_to_val(name_suffix[1]);
             Legal_MAC[1] = (hex_to_val(name_suffix[2]) << 4) | hex_to_val(name_suffix[3]);
-            UART_SendString(UART1, "name_suffix:");
+            UART_SendString(UART1, "Legal_MAC:");
             UART_SendString(UART1, name_suffix);
             UART_SendString(UART1, "\r\n");
             if (strlen(name_suffix) >= 2) {
@@ -261,6 +249,30 @@ void send_key_status_packet(void)
     packet.tail_h = PROTOCOL_TAIL_H;
     packet.tail_l = PROTOCOL_TAIL_L;
     
+    bluetooth_send_packet(&packet);
+}
+void bluetooth_send_first_connect_packet(void)
+{
+    protocol_packet_t packet;
+    packet.header_h = PROTOCOL_HEADER_H;
+    packet.header_l = PROTOCOL_HEADER_L;
+    packet.cmd_type = CMD_TYPE_CONNECT;
+    packet.data[0] = Legal_MAC[0];
+    packet.data[1] = Legal_MAC[1];
+    packet.data[2] = 0;
+    packet.data[3] = 0;
+    packet.data[4] = 0;
+    packet.data[5] = 0;
+    packet.seq_num = g_seq_num++;
+    // 检验和
+    uint16_t crc = packet.cmd_type + (packet.data[0] + packet.data[1] + 
+        packet.data[2] + packet.data[3] + packet.data[4] + 
+        packet.data[5]) + packet.seq_num;
+        
+    packet.crc_high = (uint8_t)(crc >> 8);
+    packet.crc_low = (uint8_t)(crc & 0xFF);
+    packet.tail_h = PROTOCOL_TAIL_H;
+    packet.tail_l = PROTOCOL_TAIL_L;
     bluetooth_send_packet(&packet);
 }
 // 2分钟无连接休眠的逻辑应该在LED驱动处负责休眠

@@ -17,7 +17,7 @@ volatile uint32_t g_last_packet_time = 0;  // 上次发送包的时间戳，用于每20ms发送
 volatile bluetooth_state_t g_bt_state = BT_STATE_DISCONNECTED;
 volatile bt_config_state_t g_bt_config_state = BT_CFG_STATE_IDLE;
 volatile uint8_t g_bt_config_complete = 0;
-// static uint32_t last_activity_time = 0;
+uint32_t last_activity_time = 0;
 static uint8_t mac_address[6] = {0}; // 存储MAC地址
 
 // 蓝牙名称检测
@@ -36,6 +36,10 @@ void bluetooth_send_at_command(const char* command);
 void bluetooth_init(void);
 void bluetooth_configure_name_start(void);  // 启动配置流程
 void ProcessBluetoothResponse(const char* line);
+
+// ===== 发送连接指令 =====
+void bluetooth_send_first_connect_packet(void);
+
 // bt_config_state_t get_bt_config_state(void);
 // void bluetooth_check_connection(void);
 // uint8_t bluetooth_check_sleep_timeout(void);
