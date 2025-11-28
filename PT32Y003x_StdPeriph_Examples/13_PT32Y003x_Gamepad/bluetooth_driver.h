@@ -9,6 +9,11 @@ typedef enum {
     BT_CFG_STATE_COMPLETE           // 配置完成
 } bt_config_state_t;
 
+// 指令类别 01:手柄建立连接 02:手柄状态数据
+volatile uint8_t g_current_key_state = 0;
+volatile uint8_t g_seq_num = 0;  // 指令流水号
+volatile uint32_t g_last_packet_time = 0;  // 上次发送包的时间戳，用于每20ms发送陀螺仪数据的 逻辑
+
 volatile bluetooth_state_t g_bt_state = BT_STATE_DISCONNECTED;
 volatile bt_config_state_t g_bt_config_state = BT_CFG_STATE_IDLE;
 volatile uint8_t g_bt_config_complete = 0;
@@ -18,7 +23,7 @@ static uint8_t mac_address[6] = {0}; // 存储MAC地址
 // 蓝牙名称检测
 uint8_t Legal_Name = 0;
 // 保存蓝牙地址后两字节
-uint8_t Legal_MAC[4] = {0};
+uint8_t Legal_MAC[2];
 
 // 给串口重点关注的变量
 uint16_t rx_buffer[64] = {0};

@@ -8,8 +8,8 @@
 #include "PT32Y003x_i2c.h"
 #include "PT32Y003x_tim.h"
 #include "PT32Y003x_pwm.h"
-#include <stdio.h>
-#include <stdarg.h>
+// #include <stdio.h>
+// #include <stdarg.h>
 #include "delay.h"
 
 // ===== 系统配置 =====

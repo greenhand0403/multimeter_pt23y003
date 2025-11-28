@@ -2,30 +2,20 @@
 #include <PT32Y003x_pwr.h>
 #include <PT32Y003x_exti.h>
 
-#define DEBUG_FLAG 1
-
-// 头文件的添加在keil里面设置了，自动搜索头文件
-
-// 指令类别 01:手柄建立连接 02:手柄状态数据
-volatile uint8_t g_current_key_state = 0;
-volatile uint8_t g_seq_num = 0;  // 指令流水号
-volatile uint32_t g_last_packet_time = 0;  // 上次发送包的时间戳，用于每20ms发送陀螺仪数据的 逻辑
-
 // 蓝牙名称是否合法 1 则合法
 uint8_t BLE_NAME_LEGAL = 0;
+extern uint8_t Legal_MAC[2];
 
 // 手柄当前的工作模式，影响手柄数据包代表的含义
 // 模式一代表按键舵机模式，当触发按键中断时记录发送标志位，发送完按键数据后清除标志位
 // 模式二代表陀螺仪模式，当触发定时器中断 (每20ms) 时记录发送标志位，发送完陀螺仪数据后清除标志位
 volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
+volatile work_mode_t g_work_mode_prev = WORK_MODE_IDLE;
 
-extern uint16_t rx_buffer[64];
-extern uint8_t rx_index;
-extern volatile uint8_t g_rx_line_complete;
 extern volatile uint16_t rx_head;
 extern volatile uint16_t rx_tail;
 extern volatile uint8_t rx_ring[128];
-// 临时行缓冲
+// 复制串口接收区用的临时行缓冲
 #define LINE_BUF_SIZE 128
 char line_buf[LINE_BUF_SIZE];
 uint16_t line_len = 0;
@@ -38,21 +28,13 @@ extern void led_set_off(void);
 extern void led_update(void);
 
 extern void button_init(void);
-extern uint8_t button_get_state(void);
-extern void button_check_wakeup(void);
-
-extern void servo_init(void);
-extern void servo_set_angle(uint8_t angle);
 
 extern void bluetooth_init(void);
-extern void bluetooth_send_packet(protocol_packet_t* packet);
-extern void bluetooth_check_connection(void);
-extern uint8_t bluetooth_check_sleep_timeout(void);
+
 extern void bluetooth_configure_name_start(void);
+
 // ===== 处理蓝牙响应 =====
 extern void ProcessBluetoothResponse(const char *line);
-
-extern void gyro_init(void);
 
 #pragma region 串口格式化输出辅助函数
 // 向指定UART发送字符串
@@ -64,34 +46,29 @@ void UART_SendString(UART_TypeDef* UARTx, const char *str)
         str++;
     }
 }
+// 最简单的数字转字符串（仅正整数）
+// static void utoa_simple(unsigned int val, char *buf) {
+//     char tmp[12];
+//     int i = 0;
+//     if (val == 0) { buf[0] = '0'; buf[1] = '\0'; return; }
+//     while (val) {
+//         tmp[i++] = '0' + (val % 10);
+//         val /= 10;
+//     }
+//     int j;
+//     for (j = 0; j < i; ++j) buf[j] = tmp[i - 1 - j];
+//     buf[i] = '\0';
+// }
 
-// 专门输出到UART0（蓝牙）
-void Bluetooth_Printf(const char *format, ...)
-{
-    char buffer[128];
-    va_list args;
-    
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-    
-    UART_SendString(UART0, buffer);
-}
+// void UART_Printf_Simple(UART_TypeDef* UARTx, const char *str, unsigned int num) {
+//     // 仅示例：把 str 发出，再发 num 的字符串（用于替代格式化）
+//     UART_SendString(UARTx, str);
+//     char tmp[32];
+//     utoa_simple(num, tmp);
+//     UART_SendString(UARTx, tmp);
+//     UART_SendString(UARTx, "\r\n");
+// }
 
-// 专门输出到UART1（调试）
-void Debug_Printf(const char *format, ...)
-{
-#if DEBUG_FLAG
-    char buffer[128];
-    va_list args;
-    
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-    
-    UART_SendString(UART1, buffer);
-#endif
-}
 #pragma endregion
 
 // ===== 模式检测函数 =====
@@ -137,10 +114,8 @@ void system_init(void)
     // 系统时钟定时器初始化，用于延时和定时任务
     SysTick_Init();
 
-#ifdef DEBUG_FLAG
     // UART1初始化，用于调试
     uart1_init();
-#endif
 
     // 初始化外部 LED 灯，PD4
     led_init();
@@ -159,68 +134,6 @@ void system_init(void)
     gpio.GPIO_Mode = GPIO_Mode_In;
     gpio.GPIO_Pull = GPIO_Pull_NoPull;
     GPIO_Init(GPIOD, &gpio);
-}
-
-// ===== 发送连接状态包 =====
-void send_connect_packet(void)
-{
-    protocol_packet_t packet;
-    
-    packet.header_h = PROTOCOL_HEADER_H;
-    packet.header_l = PROTOCOL_HEADER_L;
-    packet.cmd_type = CMD_TYPE_CONNECT;
-    
-    // MAC地址后2字节（实际应从蓝牙模块读取）
-    packet.data[0] = 0xAA;
-    packet.data[1] = 0xBB;
-    packet.data[2] = 0x00;
-    packet.data[3] = 0x00;
-    packet.data[4] = 0x00;
-    packet.data[5] = 0x00;
-    
-    packet.seq_num = g_seq_num++;
-    
-    uint16_t crc = packet.cmd_type + (packet.data[0] + packet.data[1] + 
-                packet.data[2] + packet.data[3] + packet.data[4] + 
-                packet.data[5]) + packet.seq_num;
-    packet.crc_high = (uint8_t)(crc >> 8);
-    packet.crc_low = (uint8_t)(crc & 0xFF);
-    
-    packet.tail_h = PROTOCOL_TAIL_H;
-    packet.tail_l = PROTOCOL_TAIL_L;
-    
-    bluetooth_send_packet(&packet);
-}
-
-// ===== 发送按键状态包 =====
-void send_key_status_packet(void)
-{
-    protocol_packet_t packet;
-    
-    packet.header_h = PROTOCOL_HEADER_H;
-    packet.header_l = PROTOCOL_HEADER_L;
-    packet.cmd_type = CMD_TYPE_STATUS;
-    
-    packet.data[0] = g_current_key_state;
-    packet.data[1] = 0x00;
-    packet.data[2] = 0x00;
-    // 陀螺仪数据（模式2时使用）
-    packet.data[3] = 0x5A;
-    packet.data[4] = 0x5A;
-    packet.data[5] = 0x5A;
-    
-    packet.seq_num = g_seq_num++;
-    
-    uint16_t crc = packet.cmd_type + (packet.data[0] + packet.data[1] + 
-                packet.data[2] + packet.data[3] + packet.data[4] + 
-                packet.data[5]) + packet.seq_num;
-    packet.crc_high = (uint8_t)(crc >> 8);
-    packet.crc_low = (uint8_t)(crc & 0xFF);
-    
-    packet.tail_h = PROTOCOL_TAIL_H;
-    packet.tail_l = PROTOCOL_TAIL_L;
-    
-    bluetooth_send_packet(&packet);
 }
 
 // ===== 休眠功能 =====
@@ -289,8 +202,6 @@ void PollAndProcessUARTLines(void)
 // ===== 主函数 =====
 int main(void)
 {
-    uint8_t i = 0;
-    
     system_init();
     
     // 状态机一，等待查询到蓝牙名称合法
@@ -303,81 +214,8 @@ int main(void)
         // 蓝牙名称检查循环
         bluetooth_configure_name_start();
     }
-    Debug_Printf("BLE NAME OK\r\n");
-    // TODO: 测试，走到这里说明前面的蓝牙名称判断逻辑已经走通
+    UART_SendString(UART1, "BLE NAME OK\r\n");
     led_set_on();
-    // 状态机二，判断蓝牙是否连接，然后进入模式一或模式二的工作中
-    
-    // 等待直到蓝牙指令查询返回正确格式的蓝牙名称 ONBOTS-XXXX
-    while (1)
-    {
-        // 接收蓝牙模块发送到串口0的数据，转发到串口1调试
-        // while(rx_index)
-        // {
-        //     UART_SendData(UART1,rx_buffer[i++]);
-        //     if(i>=rx_index)
-        //     {
-        //         i=0;
-        //         rx_index=0;
-        //     }
-        // }
-    }
-    
-    // 由 MCU读 PD3 持续判断蓝牙连接状态，若无连接，120秒自动低功耗休眠
-    // 进入休眠时开启外部按键中断，用于检测按键唤醒
-    // MCU 持续持续判断蓝牙连接状态，直到主机连接蓝牙模块，然后MCU取消自动休眠，并发送首包确认连接
-    // send_connect_packet();
-#if 0
-    while (1)
-    {
-        // TODO: 工作主循环，先检查有没有初始化工作状态，需要额外一个的变量来记录一个工作模式是否初始化完成，当用户在使用过程中切换到新的工作模式时，就重新初始化工作状态并再次记录
-        
-        // 检测工作模式
-        g_work_mode = detect_work_mode();
-
-        // 根据模式初始化相应模块
-        if (g_work_mode == WORK_MODE_1_SERVO) {
-            servo_init();
-        } else if (g_work_mode == WORK_MODE_2_GYRO) {
-            gyro_init();
-        }
-
-        bluetooth_check_connection();
-        
-        // LED控制：严格按照设计文档
-        if (g_bt_state == BT_STATE_CONNECTED) {
-            led_set_on();      // 连接后常亮
-        } else {
-            led_set_blink_fast();  // 断开后快闪（唯一闪烁模式）
-        }
-        
-        // 获取按键状态
-        uint8_t new_key_state = button_get_state();
-        
-        // 数据发送逻辑
-        uint32_t current_time = s_ms_ticks;
-        if ((new_key_state != g_current_key_state) || 
-            (g_work_mode == WORK_MODE_2_GYRO && 
-             (current_time - g_last_packet_time) >= PACKET_SEND_INTERVAL_MS)) {
-            
-            g_current_key_state = new_key_state;
-            g_last_packet_time = current_time;
-            
-            if (g_bt_state == BT_STATE_CONNECTED) {
-                send_key_status_packet();
-            }
-        }
-        
-        led_update();
-        
-        // 检查休眠超时
-        if (bluetooth_check_sleep_timeout()) {
-            enter_sleep_mode();
-        }
-        
-        delay_ms(1);
-    }
-#endif
 }
 
 #ifdef  USE_FULL_ASSERT
