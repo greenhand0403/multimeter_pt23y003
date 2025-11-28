@@ -36,6 +36,8 @@ extern void bluetooth_init(void);
 extern void bluetooth_configure_name_start(void);
 // ===== 发送首个手柄上线数据包 =====
 extern void bluetooth_send_first_connect_packet(void);
+// ===== 发送按键状态数据包 =====
+extern void send_key_status_packet(void);
 
 // ===== 处理蓝牙响应 =====
 extern void ProcessBluetoothResponse(const char *line);
@@ -104,7 +106,7 @@ void system_init(void)
     led_set_blink_fast();
 
     // 手柄六个按键初始化
-    button_init();
+    // button_init();
     // 蓝牙模块初始化
     bluetooth_init();
     
@@ -209,7 +211,7 @@ int main(void)
                 g_bt_state = BT_STATE_CONNECTED;
                 // for (int k = 0; k < 2; k++)
                 {
-                    delay_ms(400);
+                    delay_ms(500);
                     // 发送第一条上线消息
                     bluetooth_send_first_connect_packet();
                     // delay_ms(200);
@@ -221,6 +223,7 @@ int main(void)
             else
             {
                 // 用户可能连接手柄后主动切换工作模式，所有需要每次都判断工作模式
+                // 已经有延迟20ms了
                 g_work_mode = detect_work_mode();
                 // 首次进入工作模式或者检测到工作模式切换，需要初始化
                 if (g_work_mode_prev==WORK_MODE_IDLE)
@@ -228,7 +231,7 @@ int main(void)
                     if (g_work_mode == WORK_MODE_1_SERVO) {
                         // 初始化按键舵机接口
                         // servo_init();
-                        // button_init();
+                        button_init();
                     } else if (g_work_mode == WORK_MODE_2_GYRO) {
                         // 初始化陀螺仪I2C接口
                         // gyro_init();
@@ -239,11 +242,10 @@ int main(void)
                 if (g_work_mode == g_work_mode_prev)
                 {
                     if (g_work_mode == WORK_MODE_1_SERVO) {
-                        // TODO: 扫描按键状态，填到数据包里面
-                        // button_get_state();
+                        // 扫描按键状态，填到数据包里面
                         // 每20ms发送一次按键舵机数据包
                         if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
-                            // send_key_status_packet();
+                            send_key_status_packet();
                             g_last_packet_time = s_ms_ticks;
                         }
                     } else if (g_work_mode == WORK_MODE_2_GYRO) {

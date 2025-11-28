@@ -39,7 +39,7 @@ void ProcessBluetoothResponse(const char* line);
 
 // ===== 发送连接指令 =====
 void bluetooth_send_first_connect_packet(void);
-
+void send_key_status_packet(void);
 // bt_config_state_t get_bt_config_state(void);
 // void bluetooth_check_connection(void);
 // uint8_t bluetooth_check_sleep_timeout(void);

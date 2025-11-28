@@ -2,7 +2,7 @@
 #include <string.h>
 
 extern void UART_SendString(UART_TypeDef* UARTx, const char *str);
-extern void led_set_on(void);
+extern uint8_t button_get_state(void);
 
 /* 不要包含 <ctype.h>，使用轻量级替代以避免引入大块 libc */
 static inline int my_isxdigit(int c)
@@ -190,14 +190,14 @@ void ProcessBluetoothResponse(const char* line)
         }
     }
 }
-// ===== 发送连接状态包 =====
+// ===== 发送按键状态包 =====
 void send_connect_packet(void)
 {
     protocol_packet_t packet;
     
     packet.header_h = PROTOCOL_HEADER_H;
     packet.header_l = PROTOCOL_HEADER_L;
-    packet.cmd_type = CMD_TYPE_CONNECT;
+    packet.cmd_type = CMD_TYPE_STATUS;
     
     // MAC地址后2字节（实际应从蓝牙模块读取）
     packet.data[0] = 0xAA;
@@ -224,19 +224,23 @@ void send_connect_packet(void)
 // ===== 发送按键状态包 =====
 void send_key_status_packet(void)
 {
+    if (button_get_state() == 0)
+    {
+        return;
+    }
+    
     protocol_packet_t packet;
     
     packet.header_h = PROTOCOL_HEADER_H;
     packet.header_l = PROTOCOL_HEADER_L;
     packet.cmd_type = CMD_TYPE_STATUS;
     
-    packet.data[0] = g_current_key_state;
-    packet.data[1] = 0x00;
-    packet.data[2] = 0x00;
-    // 陀螺仪数据（模式2时使用）
-    packet.data[3] = 0x5A;
-    packet.data[4] = 0x5A;
-    packet.data[5] = 0x5A;
+    packet.data[0] = Legal_MAC[0];
+    packet.data[1] = Legal_MAC[1];
+    packet.data[2] = button_get_state();
+    packet.data[3] = 0;
+    packet.data[4] = 0;
+    packet.data[5] = 0;
     
     packet.seq_num = g_seq_num++;
     
