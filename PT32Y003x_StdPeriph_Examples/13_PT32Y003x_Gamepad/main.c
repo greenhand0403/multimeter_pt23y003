@@ -120,6 +120,24 @@ void system_init(void)
 }
 
 // ===== 休眠功能 =====
+// 清除标志位
+static void Wake_Key_EXITDisable(void)
+{
+    EXTI_ITConfig(EXTIA, GPIO_Pin_1, DISABLE);
+    EXTI_ITConfig(EXTIA, GPIO_Pin_2, DISABLE);
+    EXTI_ITConfig(EXTIC, GPIO_Pin_3, DISABLE);
+    EXTI_ITConfig(EXTIC, GPIO_Pin_4, DISABLE);
+    EXTI_ITConfig(EXTIC, GPIO_Pin_5, DISABLE);
+    EXTI_ITConfig(EXTIC, GPIO_Pin_6, DISABLE);
+    EXTI_ClearFlag(EXTIA, GPIO_Pin_1);
+    EXTI_ClearFlag(EXTIA, GPIO_Pin_2);
+    EXTI_ClearFlag(EXTIC, GPIO_Pin_3);
+    EXTI_ClearFlag(EXTIC, GPIO_Pin_4);
+    EXTI_ClearFlag(EXTIC, GPIO_Pin_5);
+    EXTI_ClearFlag(EXTIC, GPIO_Pin_6);
+    NVIC_DisableIRQ(EXTIA_IRQn);
+    NVIC_DisableIRQ(EXTIC_IRQn);
+}
 void enter_sleep_mode(void)
 {
     led_set_off();
@@ -139,18 +157,25 @@ void enter_sleep_mode(void)
     EXTI_ITConfig(EXTIC, GPIO_Pin_5, ENABLE);
     EXTI_ITConfig(EXTIC, GPIO_Pin_6, ENABLE);
     
-    NVIC_InitTypeDef nvic;
+    NVIC_InitTypeDef nvic, nvic2;
     nvic.NVIC_IRQChannel = EXTIA_IRQn;
     nvic.NVIC_IRQChannelCmd = ENABLE;
     nvic.NVIC_IRQChannelPriority = 0x00;
     NVIC_Init(&nvic);
     
-    nvic.NVIC_IRQChannel = EXTIC_IRQn;
-    nvic.NVIC_IRQChannelCmd = ENABLE;
-    nvic.NVIC_IRQChannelPriority = 0x00;
-    NVIC_Init(&nvic);
+    nvic2.NVIC_IRQChannel = EXTIC_IRQn;
+    nvic2.NVIC_IRQChannelCmd = ENABLE;
+    nvic2.NVIC_IRQChannelPriority = 0x01;
+    NVIC_Init(&nvic2);
     
     PWR_EnterDeepSleepMode(PWR_DeepSleepEntry_WFI);
+
+    // 唤醒后，清除标志位
+    Wake_Key_EXITDisable();
+
+    system_init();
+    last_activity_time = s_ms_ticks;
+    UART_SendString(UART1, "WAKE UP\r\n");
 }
 void PollAndProcessUARTLines(void)
 {
@@ -281,8 +306,8 @@ int main(void)
             // 如果未连接持续120秒，则进入休眠模式
             if (s_ms_ticks - last_activity_time >= AUTO_SLEEP_TIMEOUT_MS)
             {
+                UART_SendString(UART1, "SLEEP\r\n");
                 enter_sleep_mode();
-                // TODO: 休眠唤醒后，要重新发送蓝牙手柄上线的第一个数据包
             }
         }
         led_update();
