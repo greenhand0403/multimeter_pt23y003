@@ -1,7 +1,6 @@
 #ifndef __DELAY_H__
 #define __DELAY_H__
 
-// #include <stdint.h>
 #include "PT32Y003x.h"
 #include "core_cm0.h"
 #include <PT32Y003x_rcc.h>

@@ -1,6 +1,6 @@
 #include "led_driver.h"
 
-// ===== LED³õÊ¼»¯ =====
+// ===== LEDåˆå§‹åŒ– =====
 void led_init(void)
 {
     GPIO_InitTypeDef gpio;
@@ -11,29 +11,29 @@ void led_init(void)
     GPIO_Init(GPIOD, &gpio);
 }
 
-// ===== ÉèÖÃLED×´Ì¬ =====
+// ===== è®¾ç½®LEDçŠ¶æ€ =====
 void led_set_on(void)
 {
     GPIO_SetBits(LED_PIN);
     led_state = 1;
-    blink_mode = 0;  // Í£Ö¹ÉÁË¸
+    blink_mode = 0;  // åœæ­¢é—ªçƒ
 }
 
 void led_set_off(void)
 {
     GPIO_ResetBits(LED_PIN);
     led_state = 0;
-    blink_mode = 0;  // Í£Ö¹ÉÁË¸
+    blink_mode = 0;  // åœæ­¢é—ªçƒ
 }
 
-// ===== ÉèÖÃLEDÉÁË¸Ä£Ê½ =====
+// ===== è®¾ç½®LEDé—ªçƒæ¨¡å¼ =====
 void led_set_blink_fast(void)
 {
     blink_mode = 1;
     last_blink_time = s_ms_ticks;
 }
 
-// ===== LEDË¢ĞÂº¯Êı£¬ĞèÒªÔÚÖ÷Ñ­»·ÖĞµ÷ÓÃ =====
+// ===== LEDåˆ·æ–°å‡½æ•°ï¼Œéœ€è¦åœ¨ä¸»å¾ªç¯ä¸­è°ƒç”¨ =====
 void led_update(void)
 {
     if (blink_mode == 0) return;

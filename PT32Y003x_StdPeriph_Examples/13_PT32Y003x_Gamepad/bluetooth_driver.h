@@ -1,45 +1,33 @@
 #include "system_config.h"
 
-// À¶ÑÀÅäÖÃ×´Ì¬»ú
+// è“ç‰™é…ç½®çŠ¶æ€æœºï¼Œç”¨äºç¨‹åºé€»è¾‘ï¼Œè®¾ç½®åˆæ³•çš„è“ç‰™åç§°
 typedef enum {
-    BT_CFG_STATE_IDLE = 0,          // ¿ÕÏĞ×´Ì¬
-    BT_CFG_STATE_QUERY_NAME,        // ÒÑ²éÑ¯µ±Ç°Ãû³Æ
-    BT_CFG_STATE_QUERY_MAC,         // ÒÑ²éÑ¯MACµØÖ·
-    BT_CFG_STATE_SET_NAME,          // ÒÑÉèÖÃĞÂÃû³Æ
-    BT_CFG_STATE_COMPLETE           // ÅäÖÃÍê³É
+    BT_CFG_STATE_IDLE = 0,          // ç©ºé—²çŠ¶æ€
+    BT_CFG_STATE_QUERY_NAME,        // å·²æŸ¥è¯¢å½“å‰åç§°
+    BT_CFG_STATE_QUERY_MAC,         // å·²æŸ¥è¯¢MACåœ°å€
+    BT_CFG_STATE_SET_NAME,          // å·²è®¾ç½®æ–°åç§°
+    BT_CFG_STATE_COMPLETE           // é…ç½®å®Œæˆ
 } bt_config_state_t;
 
-// Ö¸ÁîÀà±ğ 01:ÊÖ±ú½¨Á¢Á¬½Ó 02:ÊÖ±ú×´Ì¬Êı¾İ
-volatile uint8_t g_current_key_state = 0;
-volatile uint8_t g_seq_num = 0;  // Ö¸ÁîÁ÷Ë®ºÅ
-volatile uint32_t g_last_packet_time = 0;  // ÉÏ´Î·¢ËÍ°üµÄÊ±¼ä´Á£¬ÓÃÓÚÃ¿20ms·¢ËÍÍÓÂİÒÇÊı¾İµÄ Âß¼­
+volatile uint8_t g_seq_num = 0;  // æŒ‡ä»¤æµæ°´å·
+volatile uint32_t g_last_packet_time = 0;  // ä¸Šæ¬¡å‘é€åŒ…çš„æ—¶é—´æˆ³ï¼Œç”¨äºæ¯20mså‘é€é™€èºä»ªæ•°æ®çš„ é€»è¾‘
 
 volatile bluetooth_state_t g_bt_state = BT_STATE_DISCONNECTED;
 volatile bt_config_state_t g_bt_config_state = BT_CFG_STATE_IDLE;
-volatile uint8_t g_bt_config_complete = 0;
-uint32_t last_activity_time = 0;
-static uint8_t mac_address[6] = {0}; // ´æ´¢MACµØÖ·
 
-// À¶ÑÀÃû³Æ¼ì²â
-uint8_t Legal_Name = 0;
-// ±£´æÀ¶ÑÀµØÖ·ºóÁ½×Ö½Ú
+uint32_t last_activity_time = 0; // ç”¨äºæœªè¿æ¥è“ç‰™æ—¶120ç§’ è‡ªåŠ¨ä¼‘çœ 
+
+// ä¿å­˜è“ç‰™åœ°å€åä¸¤å­—èŠ‚
 uint8_t Legal_MAC[2];
-
-// ¸ø´®¿ÚÖØµã¹Ø×¢µÄ±äÁ¿
-uint16_t rx_buffer[64] = {0};
-uint8_t rx_index = 0;
-volatile uint8_t bluetooth_ready = 0;
 
 void bluetooth_send_raw_data(uint8_t* data, uint16_t len);
 void bluetooth_send_packet(protocol_packet_t* packet);
 void bluetooth_send_at_command(const char* command);
 void bluetooth_init(void);
-void bluetooth_configure_name_start(void);  // Æô¶¯ÅäÖÃÁ÷³Ì
-void ProcessBluetoothResponse(const char* line);
+void bluetooth_configure_name_start(void);  // å¯åŠ¨é…ç½®æµç¨‹
 
-// ===== ·¢ËÍÁ¬½ÓÖ¸Áî =====
+void ProcessBluetoothResponse(char* line);
+
+// ===== å‘é€è¿æ¥æŒ‡ä»¤ =====
 void bluetooth_send_first_connect_packet(void);
 void send_key_status_packet(void);
-// bt_config_state_t get_bt_config_state(void);
-// void bluetooth_check_connection(void);
-// uint8_t bluetooth_check_sleep_timeout(void);

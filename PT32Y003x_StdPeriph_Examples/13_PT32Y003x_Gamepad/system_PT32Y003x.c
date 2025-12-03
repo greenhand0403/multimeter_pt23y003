@@ -159,7 +159,7 @@ void Wait_ClockReady(void)
 #define IOSC_HSI_ENABLE	(1)     /*!< 0: DISABLE,    1: ENABLE                                     */
 #define IOSC_PLL_ENABLE	(0)     /*!< 0: DISABLE,    1: ENABLE                                     */
 #define SystemClockSEL  (0)     /*!< 0: HSI,        1: HSE,     2: PLL,                           */
-// 此处降低CPU主频 分频8 将CPU从 48M 变成 6M 了
+// 此处如果降低CPU主频 分频8 将CPU从 48M 变成 6M 了
 #define AHB_Prescaler	  (0)    /*!< 0: DIV1,       1: DIV1,    2: DIV1,    ......      31: DIV1  */ 
 #define APB_Prescaler	  (0)     /*!< 0: DIV1,       1: DIV1,    2: DIV1,    ......      31: DIV1  */ 
 #define MCO_ENABLE	    (0)     /*!< 0: DISABLE,    1: ENABLE                                     */

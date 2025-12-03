@@ -1,10 +1,13 @@
 #include "bluetooth_driver.h"
 #include <string.h>
 
+// uint32_t last_send_time = 0;
+
+// extern volatile uint32_t s_ms_ticks;
 extern void UART_SendString(UART_TypeDef* UARTx, const char *str);
 extern uint8_t button_get_state(void);
 
-/* ²»Òª°üº¬ <ctype.h>£¬Ê¹ÓÃÇáÁ¿¼¶Ìæ´úÒÔ±ÜÃâÒıÈë´ó¿é libc */
+/* ä¸è¦åŒ…å« <ctype.h>ï¼Œä½¿ç”¨è½»é‡çº§æ›¿ä»£ä»¥é¿å…å¼•å…¥å¤§å— libc */
 static inline int my_isxdigit(int c)
 {
     return ( (c >= '0' && c <= '9') ||
@@ -15,10 +18,10 @@ static uint8_t hex_to_val(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'A' && c <= 'F') return c - 'A' + 10;
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    return 0; // »òÕßÄã¿ÉÒÔ×ö´íÎó´¦Àí
+    return 0; // æˆ–è€…ä½ å¯ä»¥åšé”™è¯¯å¤„ç†
 }
 
-// ===== ·¢ËÍÔ­Ê¼Êı¾İ£¨ÓÃÓÚATÃüÁî£©=====
+// ===== å‘é€åŸå§‹æ•°æ®ï¼ˆç”¨äºATå‘½ä»¤ï¼‰=====
 void bluetooth_send_raw_data(uint8_t* data, uint16_t len)
 {
     for (uint16_t i = 0; i < len; i++) {
@@ -27,26 +30,31 @@ void bluetooth_send_raw_data(uint8_t* data, uint16_t len)
     }
 }
 
-// ===== ·¢ËÍĞ­ÒéÊı¾İ°ü =====
+// ===== å‘é€åè®®æ•°æ®åŒ… =====
 void bluetooth_send_packet(protocol_packet_t* packet)
 {
-    uint8_t* buffer = (uint8_t*)packet;
-    bluetooth_send_raw_data(buffer, sizeof(protocol_packet_t));
+    // TODO: æ¯20msæ‰å‘é€ä¸€æ¬¡
+    // if (s_ms_ticks - last_send_time >= 20)
+    // {
+        uint8_t* buffer = (uint8_t*)packet;
+        bluetooth_send_raw_data(buffer, sizeof(protocol_packet_t));
+        // last_send_time = s_ms_ticks;
+    // }
 }
 
-// ===== ·¢ËÍATÃüÁî =====
+// ===== å‘é€ATå‘½ä»¤ =====
 void bluetooth_send_at_command(const char* command)
 {
     bluetooth_send_raw_data((uint8_t*)command, strlen(command));
 }
 
-// ===== ³õÊ¼»¯À¶ÑÀÄ£¿é =====
+// ===== åˆå§‹åŒ–è“ç‰™æ¨¡å— =====
 void bluetooth_init(void)
 {
     GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_5, AFIO_AF_0, ENABLE);
     GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_6, AFIO_AF_0, ENABLE);
 
-    // UART0ÅäÖÃ
+    // UART0é…ç½®
     UART_InitTypeDef uart;
     NVIC_InitTypeDef nvic;
     
@@ -67,30 +75,30 @@ void bluetooth_init(void)
     UART_Cmd(UART0, ENABLE);
 }
 
-// Æô¶¯À¶ÑÀÅäÖÃÁ÷³Ì
+// å¯åŠ¨è“ç‰™é…ç½®æµç¨‹
 void bluetooth_configure_name_start(void)
 {
     if (g_bt_config_state == BT_CFG_STATE_IDLE)
     {
         g_bt_config_state = BT_CFG_STATE_QUERY_NAME;
-        // ¿ªÊ¼²éÑ¯µ±Ç°Ãû³Æ
+        // å¼€å§‹æŸ¥è¯¢å½“å‰åç§°
         bluetooth_send_at_command("AT+TM\r\n");
     }
-    // bluetooth_send_at_command("AT+CW\r\n"); // À¶ÑÀÄ£¿é»Ö¸´³ö³§ÉèÖÃ
+    // bluetooth_send_at_command("AT+CW\r\n"); // è“ç‰™æ¨¡å—æ¢å¤å‡ºå‚è®¾ç½®
 }
-// ´¦Àí´«ÈëµÄÒ»ĞĞ£¨²»º¬ \r\n£©£¬ÀıÈç "OK"¡¢"AT+BMONBOTS-1024"¡¢"TB+CF7FA6F77DAE"
-void ProcessBluetoothResponse(const char* line)
+// å¤„ç†ä¼ å…¥çš„ä¸€è¡Œï¼ˆä¸å« \r\nï¼‰ï¼Œä¾‹å¦‚ "OK"ã€"AT+BMONBOTS-1024"ã€"TB+CF7FA6F77DAE"
+void ProcessBluetoothResponse(char* line)
 {
-    // °²È«¼ì²é
+    // å®‰å…¨æ£€æŸ¥
     if (line == NULL || line[0] == '\0') return;
 
     UART_SendString(UART1, "RX0:");
     UART_SendString(UART1, line);
     UART_SendString(UART1, "\r\n");
 
-    // Èç¹ûÓĞÄ£¿éÔÚ·µ»Ø OK£¬ÔİÊ±ºöÂÔ
+    // å¦‚æœæœ‰æ¨¡å—åœ¨è¿”å› OKï¼Œæš‚æ—¶å¿½ç•¥
     if (strcmp(line, "OK") == 0) {
-        // Èç¹ûÒÑ¾­·¢ËÍÁËÉèÖÃÃû×Ö£¬ÄÇÃ´ÔÙ·¢ËÍ¸´Î»ÃüÁî
+        // å¦‚æœå·²ç»å‘é€äº†è®¾ç½®åå­—ï¼Œé‚£ä¹ˆå†å‘é€å¤ä½å‘½ä»¤
         if (g_bt_config_state == BT_CFG_STATE_SET_NAME)
         {
             g_bt_config_state = BT_CFG_STATE_COMPLETE;
@@ -103,23 +111,48 @@ void ProcessBluetoothResponse(const char* line)
         return;
     }
 
+    // åˆ¤æ–­æ•°æ®åŒ…å¤´æ˜¯å¦ç¬¦åˆåè®®æ ¼å¼ 55 AA 01 14 7F 01 00 95 FF FF
+    // è¡¨ç¤ºPB4 è¾“å‡ºPWMä¿¡å·(1kHz)ï¼Œæ€»å…±255ï¼Œæ‰€ä»¥7Fä»£è¡¨å ç©ºæ¯”50%ï¼Œ95æ˜¯æ ¡éªŒå’Œ01+14+7F+01
+    // åˆ¤æ–­æ•°æ®åŒ…å¤´æ˜¯å¦ç¬¦åˆåè®®æ ¼å¼ 55 AA 02 00 5A 02 00 5E FF FF
+    // è¡¨ç¤ºPB5 SG90 èˆµæœºé©±åŠ¨ä¿¡å·å°†è§’åº¦è®¾ç½®ä¸º90Â°ï¼Œæ€»å…±æ˜¯(0Â°~180Â°)ï¼Œæ‰€ä»¥5Aä»£è¡¨90Â°ï¼Œ5Eæ˜¯æ ¡éªŒå’Œ02+00+5A+02
+    // TODO: æ”¹ä¸ºè°ƒç”¨é©±åŠ¨åº“é‡Œé¢çš„å‡½æ•°è®¾ç½®PWMå ç©ºæ¯”
+    if (line[8] == 0xFF && line[9] == 0xFF) {
+        if (line[2] == 0x01)
+        {
+            // IOå£è¾“å‡ºPWMä¿¡å·ï¼Œå ç©ºæ¯”50%
+            // uint16_t pwm_duty = (line[3] << 8) | line[4];
+            // é…ç½®PB4ä¸ºPWMè¾“å‡º
+            // GPIO_Config(GPIOB, GPIO_Pin_4, GPIO_AF_2, GPIO_Output_PP);
+            // è®¾ç½®PWMå ç©ºæ¯”
+            // TIM_SetCompare2(TIM2, pwm_duty);
+        }
+        else
+        {
+            // æ§åˆ¶èˆµæœºæ—‹è½¬è§’åº¦
+        }
+        UART_SendString(UART1, "PB45:");
+        UART_SendString(UART1, line);
+        UART_SendString(UART1, "\r\n");
+        // return;
+    }
+
     // if (g_bt_config_state == BT_CFG_STATE_COMPLETE && strstr(line, "QL+") != NULL)
     // {
-        // À¶ÑÀÄ£¿éÄ¬ÈÏ·¢ËÍ³õÊ¼ĞÅÏ¢£¬ÆäÖĞ×îºóÒ»¸öÊÇ QL+00 ±íÊ¾Õı³£¹¤×÷Ä£Ê½ÖĞ
-        // ÎÒÃÇĞèÒªµÈ´ıËü·µ»ØQL+Ö®ºóÔÙ·¢²éÑ¯Ãû×ÖµÄÃüÁî£¿
+        // è“ç‰™æ¨¡å—é»˜è®¤å‘é€åˆå§‹ä¿¡æ¯ï¼Œå…¶ä¸­æœ€åä¸€ä¸ªæ˜¯ QL+00 è¡¨ç¤ºæ­£å¸¸å·¥ä½œæ¨¡å¼ä¸­
+        // æˆ‘ä»¬éœ€è¦ç­‰å¾…å®ƒè¿”å›QL+ä¹‹åå†å‘æŸ¥è¯¢åå­—çš„å‘½ä»¤ï¼Ÿ
     // }
-    // Èç¹û·µ»ØµÄÊÇÃû³ÆĞĞ£¬ÀıÈç "TM+OBTEST-1024" »ò "TM+ONBOTS-XXXX"
-    // ¼È´¦ÀíÀ¶ÑÀÃû³Æ²éÑ¯Ö¸ÁîµÄ»Ø¸´£¬Ò²ÏìÓ¦Èí¸´Î»ºóµÄÀ¶ÑÀĞÅÏ¢»Ø¸´£¬´ÓÖĞ¼ì²éÀ¶ÑÀÃû³Æ
+    // å¦‚æœè¿”å›çš„æ˜¯åç§°è¡Œï¼Œä¾‹å¦‚ "TM+OBTEST-1024" æˆ– "TM+ONBOTS-XXXX"
+    // æ—¢å¤„ç†è“ç‰™åç§°æŸ¥è¯¢æŒ‡ä»¤çš„å›å¤ï¼Œä¹Ÿå“åº”è½¯å¤ä½åçš„è“ç‰™ä¿¡æ¯å›å¤ï¼Œä»ä¸­æ£€æŸ¥è“ç‰™åç§°
     if (strstr(line, "TM+") != NULL) {
-        // ½âÎöÃû×ÖĞĞ
+        // è§£æåå­—è¡Œ
         const char* p = strstr(line, "ONBOTS-");
         if (p) {
-            // Ãû×ÖÒÑ¾­ÊÇ ONBOTS-xxxx£¬Ö±½Ó±ê¼ÇºÏ·¨
+            // åå­—å·²ç»æ˜¯ ONBOTS-xxxxï¼Œç›´æ¥æ ‡è®°åˆæ³•
             const char* suffix = p + strlen("ONBOTS-");
             char name_suffix[8] = {0};
             strncpy(name_suffix, suffix, 4);
             name_suffix[4] = '\0';
-            // ¼ÇÂ¼ºÏ·¨µÄ MAC µØÖ·
+            // è®°å½•åˆæ³•çš„ MAC åœ°å€
             Legal_MAC[0] = (hex_to_val(name_suffix[0]) << 4) | hex_to_val(name_suffix[1]);
             Legal_MAC[1] = (hex_to_val(name_suffix[2]) << 4) | hex_to_val(name_suffix[3]);
             UART_SendString(UART1, "Legal_MAC:");
@@ -128,22 +161,22 @@ void ProcessBluetoothResponse(const char* line)
             if (strlen(name_suffix) >= 2) {
                 BLE_NAME_LEGAL = 1;
             }
-            return; // ÒÑ´¦ÀíÍê¸ÃĞĞ£¬Ö±½Ó·µ»Ø
+            return; // å·²å¤„ç†å®Œè¯¥è¡Œï¼Œç›´æ¥è¿”å›
         } else {
             // Debug_Printf("ilegal\r\n");
-            // Ãû×Ö²»ÊÇÆÚÍû¸ñÊ½£¬¿ªÊ¼²éÑ¯ MAC£¨²¢ÇÒ**Á¢¼´·µ»Ø**£¬²»Òª¼ÌĞøÓÃµ±Ç°ĞĞ½âÎöMAC£©
+            // åå­—ä¸æ˜¯æœŸæœ›æ ¼å¼ï¼Œå¼€å§‹æŸ¥è¯¢ MACï¼ˆå¹¶ä¸”**ç«‹å³è¿”å›**ï¼Œä¸è¦ç»§ç»­ç”¨å½“å‰è¡Œè§£æMACï¼‰
             // if (g_bt_config_state == BT_CFG_STATE_IDLE || g_bt_config_state == BT_CFG_STATE_QUERY_NAME) {
                 UART_SendString(UART1, "get mac\r\n");
                 g_bt_config_state = BT_CFG_STATE_QUERY_MAC;
-                bluetooth_send_at_command("AT+TN\r\n"); // ·¢ËÍ²éÑ¯MACÃüÁî
-                return; // ¹Ø¼ü£º·µ»Ø£¬±ÜÃâÏÂÃæ°Ñµ±Ç°Ãû×ÖĞĞµ±×÷MAC½âÎö
+                bluetooth_send_at_command("AT+TN\r\n"); // å‘é€æŸ¥è¯¢MACå‘½ä»¤
+                return; // å…³é”®ï¼šè¿”å›ï¼Œé¿å…ä¸‹é¢æŠŠå½“å‰åå­—è¡Œå½“ä½œMACè§£æ
             // }
         }
     }
-    // ÏÂÃæÖ»´¦ÀíÕæÕıµÄ MAC ĞĞ ¡ª¡ª ÏÈ×öÒ»¸ö¸üÑÏ¸ñµÄÇ°×º¼ì²é£¬±ÜÃâÎóÅĞ
-    // ÀıÈçÄãµÄÄ£¿é MAC ĞĞÊÇ "TB+CF7FA6F77DAE"£¬ËùÒÔÎÒÃÇ¼ì²éÊÇ·ñ°üº¬ "TB+"
+    // ä¸‹é¢åªå¤„ç†çœŸæ­£çš„ MAC è¡Œ â€”â€” å…ˆåšä¸€ä¸ªæ›´ä¸¥æ ¼çš„å‰ç¼€æ£€æŸ¥ï¼Œé¿å…è¯¯åˆ¤
+    // ä¾‹å¦‚ä½ çš„æ¨¡å— MAC è¡Œæ˜¯ "TB+CF7FA6F77DAE"ï¼Œæ‰€ä»¥æˆ‘ä»¬æ£€æŸ¥æ˜¯å¦åŒ…å« "TB+"
     if (strstr(line, "TB+") != NULL &&g_bt_config_state == BT_CFG_STATE_QUERY_MAC) {
-        // ÕÒµ½Á¬ĞøµÄ hex ´®²¢È¡ºÏÊÊµÄ 4 ¸ö×Ö·û£¨´Ë´¦ÒÔÈ¡ run µÄÇ° 4 ¸ö²¢°´ÄãµÄÒªÇó»»Î»ÎªÀı£©
+        // æ‰¾åˆ°è¿ç»­çš„ hex ä¸²å¹¶å–åˆé€‚çš„ 4 ä¸ªå­—ç¬¦ï¼ˆæ­¤å¤„ä»¥å– run çš„å‰ 4 ä¸ªå¹¶æŒ‰ä½ çš„è¦æ±‚æ¢ä½ä¸ºä¾‹ï¼‰
         const char* hexp = line;
         while (*hexp) {
             if (my_isxdigit((unsigned char)*hexp)) {
@@ -151,18 +184,18 @@ void ProcessBluetoothResponse(const char* line)
                 int cnt = 0;
                 while (my_isxdigit((unsigned char)*hexp)) { cnt++; hexp++; }
                 if (cnt >= 4) {
-                    // ÕâÀïÑ¡ÔñÊ¹ÓÃ run µÄÇ° 4 ¸ö×Ö·û×÷Îª»ù×¼£¨Èç CF7F -> 7FCF£©
+                    // è¿™é‡Œé€‰æ‹©ä½¿ç”¨ run çš„å‰ 4 ä¸ªå­—ç¬¦ä½œä¸ºåŸºå‡†ï¼ˆå¦‚ CF7F -> 7FCFï¼‰
                     char new_name[20];
                     const char prefix[] = "AT+BMONBOTS-";
                     char *p = new_name;
                     memcpy(p, prefix, sizeof(prefix) - 1);
                     p += (sizeof(prefix) - 1);
 
-                    /* ¿½Èë 4 ¸öºó×º×Ö·û CF7F ¾Í±ä³ÉÁË ONBOTS-7FCF */
-                    p[0] = *(start + 2); // µÚ3¸ö×Ö·û
-                    p[1] = *(start + 3); // µÚ4¸ö×Ö·û
-                    p[2] = *(start + 0); // µÚ1¸ö×Ö·û
-                    p[3] = *(start + 1); // µÚ2¸ö×Ö·û
+                    /* æ‹·å…¥ 4 ä¸ªåç¼€å­—ç¬¦ CF7F å°±å˜æˆäº† ONBOTS-7FCF */
+                    p[0] = *(start + 2); // ç¬¬3ä¸ªå­—ç¬¦
+                    p[1] = *(start + 3); // ç¬¬4ä¸ªå­—ç¬¦
+                    p[2] = *(start + 0); // ç¬¬1ä¸ªå­—ç¬¦
+                    p[3] = *(start + 1); // ç¬¬2ä¸ªå­—ç¬¦
 
                     Legal_MAC[0] = (hex_to_val(p[0]) << 4) | hex_to_val(p[1]);
                     Legal_MAC[1] = (hex_to_val(p[2]) << 4) | hex_to_val(p[3]);
@@ -178,11 +211,11 @@ void ProcessBluetoothResponse(const char* line)
                     UART_SendString(UART1, new_name);
                     UART_SendString(UART1, "\r\n");
                     
-                    // ·¢ËÍÉèÖÃÃû³ÆÃüÁî
+                    // å‘é€è®¾ç½®åç§°å‘½ä»¤
                     bluetooth_send_at_command(new_name);
-                    // ·¢ÍêÀ¶ÑÀÄ£¿é»á·µ»ØOK £¬ÎÒÃÇĞèÒªµÈ´ıËü·µ»ØOK ºó£¬ÔÙ·¢ËÍ reset ÃüÁî
+                    // å‘å®Œè“ç‰™æ¨¡å—ä¼šè¿”å›OK ï¼Œæˆ‘ä»¬éœ€è¦ç­‰å¾…å®ƒè¿”å›OK åï¼Œå†å‘é€ reset å‘½ä»¤
                     g_bt_config_state = BT_CFG_STATE_SET_NAME;
-                    return; // Íê³É¸ÃĞĞ´¦Àíºó·µ»Ø
+                    return; // å®Œæˆè¯¥è¡Œå¤„ç†åè¿”å›
                 }
             } else {
                 hexp++;
@@ -190,7 +223,7 @@ void ProcessBluetoothResponse(const char* line)
         }
     }
 }
-// ===== ·¢ËÍ°´¼ü×´Ì¬°ü =====
+// ===== å‘é€æŒ‰é”®çŠ¶æ€åŒ… =====
 void send_connect_packet(void)
 {
     protocol_packet_t packet;
@@ -199,7 +232,7 @@ void send_connect_packet(void)
     packet.header_l = PROTOCOL_HEADER_L;
     packet.cmd_type = CMD_TYPE_STATUS;
     
-    // MACµØÖ·ºó2×Ö½Ú£¨Êµ¼ÊÓ¦´ÓÀ¶ÑÀÄ£¿é¶ÁÈ¡£©
+    // MACåœ°å€å2å­—èŠ‚ï¼ˆå®é™…åº”ä»è“ç‰™æ¨¡å—è¯»å–ï¼‰
     packet.data[0] = 0xAA;
     packet.data[1] = 0xBB;
     packet.data[2] = 0x00;
@@ -221,7 +254,7 @@ void send_connect_packet(void)
     bluetooth_send_packet(&packet);
 }
 
-// ===== ·¢ËÍ°´¼ü×´Ì¬°ü =====
+// ===== å‘é€æŒ‰é”®çŠ¶æ€åŒ… =====
 void send_key_status_packet(void)
 {
     if (button_get_state() == 0)
@@ -268,7 +301,7 @@ void bluetooth_send_first_connect_packet(void)
     packet.data[4] = 0;
     packet.data[5] = 0;
     packet.seq_num = g_seq_num++;
-    // ¼ìÑéºÍ
+    // æ£€éªŒå’Œ
     uint16_t crc = packet.cmd_type + (packet.data[0] + packet.data[1] + 
         packet.data[2] + packet.data[3] + packet.data[4] + 
         packet.data[5]) + packet.seq_num;
@@ -279,27 +312,3 @@ void bluetooth_send_first_connect_packet(void)
     packet.tail_l = PROTOCOL_TAIL_L;
     bluetooth_send_packet(&packet);
 }
-// 2·ÖÖÓÎŞÁ¬½ÓĞİÃßµÄÂß¼­Ó¦¸ÃÔÚLEDÇı¶¯´¦¸ºÔğĞİÃß
-// ===== ¼ì²éÁ¬½Ó×´Ì¬ =====
-// void bluetooth_check_connection(void)
-// {
-//     uint32_t current_time = s_ms_ticks;
-//     // 3Ãë²»·¢ËÍÊı¾İÔòÈÏÎªÁ¬½Ó¶Ï¿ª
-//     if ((current_time - last_activity_time) > 3000) {
-//         if (g_bt_state != BT_STATE_DISCONNECTED) {
-//             g_bt_state = BT_STATE_DISCONNECTED;
-//         }
-//     }
-// }
-
-// ===== ¼ì²éĞİÃß³¬Ê± =====
-// uint8_t bluetooth_check_sleep_timeout(void)
-// {
-//     uint32_t current_time = s_ms_ticks;
-//     if (g_bt_state == BT_STATE_DISCONNECTED) {
-//         if ((current_time - last_activity_time) >= AUTO_SLEEP_TIMEOUT_MS) {
-//             return 1;
-//         }
-//     }
-//     return 0;
-// }

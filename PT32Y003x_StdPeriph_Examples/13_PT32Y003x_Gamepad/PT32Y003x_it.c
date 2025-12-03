@@ -2,16 +2,11 @@
 #include "PT32Y003x_uart.h"
 #include <PT32Y003x_gpio.h>
 
-// ===== 外部变量声明 =====
-extern u16 rx_buffer[64];
-extern u8 rx_index;
-
 #define RX_RING_SIZE 128
 
-volatile uint8_t rx_ring[RX_RING_SIZE];
+volatile uint8_t rx_ring[RX_RING_SIZE] = {0};
 volatile uint16_t rx_head = 0;
 volatile uint16_t rx_tail = 0;
-volatile uint8_t g_rx_line_complete = 0; // 0/1
 
 // ===== UART0中断服务函数 =====
 void UART0_Handler(void)

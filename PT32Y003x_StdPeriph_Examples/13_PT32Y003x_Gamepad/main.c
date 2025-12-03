@@ -1,10 +1,12 @@
 #include "system_config.h"
-#include <PT32Y003x_pwr.h>
-#include <PT32Y003x_exti.h>
+#include "delay.h"
 
+// #include "pwm_driver.h"
+// #include "servo_driver.h"
 // 蓝牙名称是否合法 1 则合法
 uint8_t BLE_NAME_LEGAL = 0;
 extern uint8_t Legal_MAC[2];
+
 // 记录上次活动时间，用于判断是否120秒未连接超时
 extern uint32_t last_activity_time;
 extern volatile uint32_t g_last_packet_time;  // 上次发送包的时间戳，用于每20ms发送陀螺仪数据的 逻辑
@@ -17,10 +19,18 @@ volatile work_mode_t g_work_mode_prev = WORK_MODE_IDLE;
 extern volatile uint16_t rx_head;
 extern volatile uint16_t rx_tail;
 extern volatile uint8_t rx_ring[128];
+
 // 复制串口接收区用的临时行缓冲
 #define LINE_BUF_SIZE 128
 char line_buf[LINE_BUF_SIZE];
-uint16_t line_len = 0;
+volatile uint16_t line_len = 0;
+
+// volatile uint16_t g_pwm_duty = 0;
+// volatile uint8_t g_servo_angle = 90; // 默认90度
+
+// 逐字节发送缓冲区
+// uint16_t rx_buffer[64] = {0};
+// uint8_t rx_index = 0;
 
 // ===== 外部函数声明 =====
 extern void led_init(void);
@@ -40,7 +50,13 @@ extern void bluetooth_send_first_connect_packet(void);
 extern void send_key_status_packet(void);
 
 // ===== 处理蓝牙响应 =====
-extern void ProcessBluetoothResponse(const char *line);
+extern void ProcessBluetoothResponse(char *line);
+
+extern void pwm_init(void);
+extern void servo_init(void);
+
+extern void pwm_set_duty(uint16_t duty);
+extern void servo_set_angle(uint8_t angle);
 
 #pragma region 串口格式化输出辅助函数
 // 向指定UART发送字符串
@@ -65,9 +81,7 @@ work_mode_t detect_work_mode(void)
     gpio.GPIO_Pull = GPIO_Pull_Up;
     GPIO_Init(GPIOA, &gpio);
     
-    delay_ms(20);
-    
-    if (GPIO_ReadDataBit(GPIOA, GPIO_Pin_3) == 1) {
+    if (GPIO_ReadDataBit(MODE_DETECT_PIN) == 1) {
         return WORK_MODE_1_SERVO;  // 悬空 - 模式1
     } else {
         return WORK_MODE_2_GYRO;   // 接地 - 模式2
@@ -182,17 +196,24 @@ void PollAndProcessUARTLines(void)
     // 从环形缓冲读取字节，拼成行
     while (rx_tail != rx_head) {
         uint8_t b = rx_ring[rx_tail];
-        rx_tail = (rx_tail + 1) % 128;
+        rx_tail = (rx_tail + 1) % LINE_BUF_SIZE;
 
         // 限制行长度，防止越界
         if (line_len < LINE_BUF_SIZE - 1) {
             line_buf[line_len++] = (char)b;
+            // rx_buffer[rx_index++] = b;
         } else {
             // 行太长，丢弃并重置
             line_len = 0;
         }
 
-        // 检测到 \r\n 结尾（常见的是 \r\n 两字节）
+        // 测试，直接透传 等待 UART1 发送缓冲区为空
+        // while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
+        // 直接发送原始字节
+        // UART_SendData(UART1, b);
+
+        // 检测到 \r\n 结尾（常见的是 \r\n 两字节）&& line_len >= 2 && line_buf[line_len - 2] == '\r'
+        // 很神奇，这里面多一个判断条件 例如 g_work_mode == WORK_MODE_IDLE && 会导致后续的10字节数据包接收出错
         if (b == '\n') {
             // 去掉末尾可能的 \r
             if (line_len >= 2 && line_buf[line_len - 2] == '\r') {
@@ -205,11 +226,98 @@ void PollAndProcessUARTLines(void)
             ProcessBluetoothResponse(line_buf); // 建议把行内容传给处理函数
             line_len = 0;
         }
+        // 判断数据包头是否符合协议格式 55 AA 01 14 7F 01 00 95 FF FF
+        // 表示PB4 输出PWM信号(1kHz)，总共255，所以7F代表占空比50%，95是校验和01+14+7F+01
+        // 判断数据包头是否符合协议格式 55 AA 02 00 5A 02 00 5E FF FF
+        // 表示PB5 SG90 舵机驱动信号将角度设置为90°，总共是(0°~180°)，所以5A代表90°，5E是校验和02+00+5A+02
+        else if (g_work_mode == WORK_MODE_1_SERVO && line_len == 10)// && line_buf[line_len-4] == 'F' && line_buf[line_len-3] == 'F' && line_buf[line_len-2] == 'F' && line_buf[line_len-1] == 'F')
+        {
+            // ProcessBluetoothResponse(line_buf); // 建议把行内容传给处理函数
+            // for (int j = line_len - 1; j >= 0; j--)
+            // {
+            //     UART_SendData(UART1, line_buf[rx_head - j]);
+            //     while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
+            // }
+            // // 测试索引值
+            // // rx_tail = rx_head;
+            // line_len = 0;
+
+            for (int j = 1; j <= 10; j++)
+            {
+                UART_SendData(UART1, line_buf[rx_head - line_len + j]);
+                while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
+            }
+            // 测试索引值
+            // rx_tail = rx_head;
+            line_len = 0;
+        }
+        
+    }
+}
+// 新增函数：尝试从环形缓冲区中解析一个完整的协议包
+void TryParseProtocolPacket(void)
+{
+    // 简单的状态机解析 解析协议包
+    uint8_t parse_state = 0;
+    uint8_t packet_buffer[10] = {0};
+    uint8_t packet_index = 0;
+
+    while (rx_tail != rx_head) {
+        uint8_t byte = rx_ring[rx_tail];
+        rx_tail = (rx_tail + 1) % 128;
+
+        switch (parse_state) {
+            case 0: // 寻找包头
+                if (byte == PROTOCOL_HEADER_H) {
+                    parse_state = 1;
+                    packet_buffer[0] = byte;
+                    packet_index = 1;
+                }
+                break;
+            case 1: // 检查第二个包头字节
+                if (byte == PROTOCOL_HEADER_L) {
+                    packet_buffer[1] = byte;
+                    parse_state = 2;
+                    packet_index = 2;
+                } else {
+                    parse_state = 0; // 复位
+                }
+                break;
+            default:
+                packet_buffer[packet_index] = byte;
+                packet_index++;
+                if (packet_index == 10) {
+                    // 尝试校验包尾
+                    // if (packet_buffer[8] == PROTOCOL_TAIL_H && packet_buffer[9] == PROTOCOL_TAIL_L) {
+                        // 包完整，进行处理
+                        // TODO: 这里可以加CRC校验
+
+                        // 根据指令类型处理
+                        // if (packet_buffer[3] == 0x01) {
+                            // PWM 控制 默认控制PB4
+                            // g_pwm_duty = packet_buffer[4] * 4; // 占空比值 (0-1000)
+                            // pwm_set_duty(packet_buffer[4] * 4);
+                        // } else if (packet_buffer[3] == 0x02) {
+                            // 舵机控制 默认控制PB5
+                            // g_servo_angle = packet_buffer[4]; // 角度 (0-180)
+                        //     if (g_servo_angle > 180) g_servo_angle = 180;
+                        //     servo_set_angle(g_servo_angle);
+
+                        // }
+                    // }
+                    // 无论校验成功与否，都复位状态机
+                    parse_state = 0;
+                    packet_index = 0;
+                }
+                break;
+        }
     }
 }
 // ===== 主函数 =====
 int main(void)
 {
+    uint16_t i = 0;
+
     system_init();
     
     // 状态机一，等待查询到蓝牙名称合法
@@ -254,9 +362,11 @@ int main(void)
                 if (g_work_mode_prev==WORK_MODE_IDLE)
                 {
                     if (g_work_mode == WORK_MODE_1_SERVO) {
-                        // 初始化按键舵机接口
-                        // servo_init();
+                        // 初始化按键
                         button_init();
+                        // 初始化 PWM 和舵机驱动
+                        pwm_init();
+                        servo_init();
                     } else if (g_work_mode == WORK_MODE_2_GYRO) {
                         // 初始化陀螺仪I2C接口
                         // gyro_init();
@@ -273,6 +383,25 @@ int main(void)
                             send_key_status_packet();
                             g_last_packet_time = s_ms_ticks;
                         }
+
+                        // TODO: 蓝牙接收器
+                        // 从环形缓冲读取字节，拼成行
+                        PollAndProcessUARTLines();
+
+                        // 接收蓝牙模块发送到串口0的数据，转发到串口1调试
+                        // while(rx_index)
+                        // {
+                        //     UART_SendData(UART1,rx_buffer[i++]);
+                        //     if(i==rx_index)
+                        //     {
+                        //         i=0;
+                        //         rx_index=0;
+                        //     }
+                        // }
+                        
+                        // 新增：尝试解析二进制控制指令包
+                        // TryParseProtocolPacket();
+
                     } else if (g_work_mode == WORK_MODE_2_GYRO) {
                         // 请求陀螺仪数据，填到数据包里
                         // request_gyro_data();
@@ -287,16 +416,12 @@ int main(void)
                 {
                     g_work_mode_prev = WORK_MODE_IDLE;
                 }
-
-                // TODO: 蓝牙消息处理
-                // 从环形缓冲读取字节，拼成行
-                PollAndProcessUARTLines();
             }
         }
         // 未连接手柄
         else
         {
-            // 连接后主机断开蓝牙手柄
+            // 连接后主机断开蓝牙手柄的情况
             if (g_bt_state == BT_STATE_CONNECTED) {
                 led_set_blink_fast();
                 g_bt_state = BT_STATE_DISCONNECTED;
