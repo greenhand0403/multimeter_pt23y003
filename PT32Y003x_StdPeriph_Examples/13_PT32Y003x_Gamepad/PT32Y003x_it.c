@@ -2,7 +2,7 @@
 #include "PT32Y003x_uart.h"
 #include <PT32Y003x_gpio.h>
 
-#define RX_RING_SIZE 128
+#define RX_RING_SIZE 60
 
 volatile uint8_t rx_ring[RX_RING_SIZE] = {0};
 volatile uint16_t rx_head = 0;

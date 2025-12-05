@@ -16,14 +16,14 @@ extern volatile uint32_t g_last_packet_time;  // 上次发送包的时间戳，�
 volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
 volatile work_mode_t g_work_mode_prev = WORK_MODE_IDLE;
 
-extern volatile uint16_t rx_head;
-extern volatile uint16_t rx_tail;
-extern volatile uint8_t rx_ring[128];
-
 // 复制串口接收区用的临时行缓冲
-#define LINE_BUF_SIZE 128
+#define LINE_BUF_SIZE 60
 char line_buf[LINE_BUF_SIZE];
 volatile uint16_t line_len = 0;
+
+extern volatile uint16_t rx_head;
+extern volatile uint16_t rx_tail;
+extern volatile uint8_t rx_ring[LINE_BUF_SIZE];
 
 // volatile uint16_t g_pwm_duty = 0;
 // volatile uint8_t g_servo_angle = 90; // 默认90度
@@ -191,8 +191,13 @@ void enter_sleep_mode(void)
     last_activity_time = s_ms_ticks;
     UART_SendString(UART1, "WAKE UP\r\n");
 }
+uint8_t count = 0;
+// uint8_t hit_head = 0;
+// uint8_t hit_tail = 0;
+// uint8_t receive_buffer[10] = {0x55, 0xAA, 0x01, 0x14, 0x7F, 0x01, 0x00, 0x95, 0xFF, 0xFF};
 void PollAndProcessUARTLines(void)
 {
+    uint16_t tmp = line_len;
     // 从环形缓冲读取字节，拼成行
     while (rx_tail != rx_head) {
         uint8_t b = rx_ring[rx_tail];
@@ -230,7 +235,7 @@ void PollAndProcessUARTLines(void)
         // 表示PB4 输出PWM信号(1kHz)，总共255，所以7F代表占空比50%，95是校验和01+14+7F+01
         // 判断数据包头是否符合协议格式 55 AA 02 00 5A 02 00 5E FF FF
         // 表示PB5 SG90 舵机驱动信号将角度设置为90°，总共是(0°~180°)，所以5A代表90°，5E是校验和02+00+5A+02
-        else if (g_work_mode == WORK_MODE_1_SERVO && line_len == 10)// && line_buf[line_len-4] == 'F' && line_buf[line_len-3] == 'F' && line_buf[line_len-2] == 'F' && line_buf[line_len-1] == 'F')
+        else if (g_work_mode == WORK_MODE_1_SERVO && line_buf[line_len-1] == 0xff && line_buf[line_len-2] == 0xff)
         {
             // ProcessBluetoothResponse(line_buf); // 建议把行内容传给处理函数
             // for (int j = line_len - 1; j >= 0; j--)
@@ -241,18 +246,41 @@ void PollAndProcessUARTLines(void)
             // // 测试索引值
             // // rx_tail = rx_head;
             // line_len = 0;
+            
+            // __disable_irq();
 
-            for (int j = 1; j <= 10; j++)
+            // for (int j = 1; j <= 10; j++)
             {
-                UART_SendData(UART1, line_buf[rx_head - line_len + j]);
-                while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
+                // uint8_t i = (rx_head - line_len + j ) % LINE_BUF_SIZE;
+                // UART_SendData(UART1, line_buf[i]);
+                // while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
             }
+            // 问题三，3次发送10字节包，分别打印0C 16 20是什么原因？
+            UART_SendData(UART1, rx_head);
+            while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
+            UART_SendData(UART1, rx_tail);
+            while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
+            // 问题二编译报错
+            // UART_SendData(UART1, line_len);
+            // while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
+
             // 测试索引值
             // rx_tail = rx_head;
-            line_len = 0;
+            // line_len = 0;
+            // __enable_irq();
+
+            // 问题一 测试通过 可用
+            // for (int j = 0; j < 10; j++)
+            // {
+            //     UART_SendData(UART1, line_buf[j+10*count]);
+            //     while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
+            // }
+            // count = (count + 1) % (LINE_BUF_SIZE/10);
         }
+    
         
     }
+    
 }
 // 新增函数：尝试从环形缓冲区中解析一个完整的协议包
 void TryParseProtocolPacket(void)
