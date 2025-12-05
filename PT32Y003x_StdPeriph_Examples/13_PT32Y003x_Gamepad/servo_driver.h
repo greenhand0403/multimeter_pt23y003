@@ -4,6 +4,9 @@
 
 #include "system_config.h"
 
+uint16_t soft_pwm_time;
+volatile uint16_t soft_pwm_set_angle;
+
 void servo_init(void);
 void servo_set_angle(uint8_t angle);
 

@@ -1,5 +1,6 @@
 #include "system_config.h"
 #include "delay.h"
+#include "PT32Y003x_it.h"
 
 // #include "pwm_driver.h"
 // #include "servo_driver.h"
@@ -17,7 +18,7 @@ volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
 volatile work_mode_t g_work_mode_prev = WORK_MODE_IDLE;
 
 // 复制串口接收区用的临时行缓冲
-#define LINE_BUF_SIZE 60
+#define LINE_BUF_SIZE RX_RING_SIZE
 char line_buf[LINE_BUF_SIZE];
 volatile uint16_t line_len = 0;
 
@@ -292,7 +293,7 @@ void TryParseProtocolPacket(void)
 
     while (rx_tail != rx_head) {
         uint8_t byte = rx_ring[rx_tail];
-        rx_tail = (rx_tail + 1) % 128;
+        rx_tail = (rx_tail + 1) % RX_RING_SIZE;
 
         switch (parse_state) {
             case 0: // 寻找包头
@@ -348,6 +349,17 @@ int main(void)
 
     system_init();
     
+    // 测试 PB4 PWM 输出控制舵机角度1kHz 30%占空比
+    pwm_init();
+    pwm_set_duty(300); // 30% 占空比 范围是0~999
+    // 测试 PB5 舵机输出控制角度30度，有bug无法驱动舵机
+    // servo_init();
+    // servo_set_angle(30);
+    while (1)
+    {
+        /* code */
+    }
+
     // 状态机一，等待查询到蓝牙名称合法
     while (!BLE_NAME_LEGAL)
     {

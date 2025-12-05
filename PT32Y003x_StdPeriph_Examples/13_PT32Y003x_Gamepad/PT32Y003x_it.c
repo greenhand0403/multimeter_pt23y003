@@ -1,8 +1,8 @@
 #include "PT32Y003x.h"
 #include "PT32Y003x_uart.h"
 #include <PT32Y003x_gpio.h>
-
-#define RX_RING_SIZE 60
+#include "PT32Y003x_it.h"
+#include <PT32Y003x_tim.h>
 
 volatile uint8_t rx_ring[RX_RING_SIZE] = {0};
 volatile uint16_t rx_head = 0;
@@ -48,7 +48,28 @@ void SysTick_Handler(void)
   if (s_ms_delay!= 0x00) 
     s_ms_delay--;
 }
-
+extern uint16_t soft_pwm_time;
+extern volatile uint16_t soft_pwm_set_angle;
+void TIM2_Handler(void)
+{
+    if (soft_pwm_time == 0)
+    {
+        GPIO_SetBits(GPIOB,GPIO_Pin_5);
+    }else if (soft_pwm_time == soft_pwm_set_angle)
+    {
+        GPIO_ResetBits(GPIOB,GPIO_Pin_5);
+    }
+    soft_pwm_time++;
+    if (soft_pwm_time==20000)
+    {
+        soft_pwm_time = 0;
+    }
+    
+	if(TIM_GetFlagStatus(TIM2,TIM_FLAG_ARF)!=RESET)
+	{
+		TIM_ClearFlag(TIM2,TIM_FLAG_ARF);
+	}
+}
 // 当任意按键按下时唤醒
 void EXTIA_Handler(void)
 {

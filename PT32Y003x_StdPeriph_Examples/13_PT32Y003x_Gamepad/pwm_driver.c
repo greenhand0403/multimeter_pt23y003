@@ -3,7 +3,8 @@
 
 void pwm_init(void)
 {
-    GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_4, AFIO_AF_1,ENABLE);//CH3N
+	// PB4 选择 AFIO（映射 TIM1_CH2）
+    GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_4, AFIO_AF_2, ENABLE); 
 
     // 使用定时器TIM1来做PWM输出
     // 配置TIM1为PWM模式
@@ -13,20 +14,21 @@ void pwm_init(void)
     PWM_TimeBaseInitTypeDef PWM_TimeBaseInitType;
 	PWM_OCInitTypeDef OutInit;
 	/* 时钟选择 */
-	PWM_TimeBaseInitType.PWM_ClockSource = PWM_ClockSource_SYSCLK;
+	// PWM_TimeBaseInitType.PWM_ClockSource = PWM_ClockSource_SYSCLK;
 	/* 中央计数模式 -- 不开启 */
 	PWM_TimeBaseInitType.PWM_CenterAlignedMode = PWM_CenterAlignedMode_Disable;
 	/* 计数器计数模式，设置为向上计数 */
 	PWM_TimeBaseInitType.PWM_Direction = PWM_Direction_Up;
-	/* 周期匹配寄存器,累计MR0+1个频率后产生一个更新或者中断 */
-	PWM_TimeBaseInitType.PWM_AutoReloadValue = 1000;
 	/* 驱动CNT计数器的时钟 = Fcksys/(psc+1)*/
     // PSC = 47, 计数频率 = 48MHz / (47+1) = 1MHz, PWM频率 = 1MHz / 1000 = 1kHz
 	PWM_TimeBaseInitType.PWM_Prescaler = 47;
+	/* 周期匹配寄存器,累计MR0+1个频率后产生一个更新或者中断 */
+	// PWM_TimeBaseInitType.PWM_AutoReloadValue = 1000;//1ms 触发一次，也就是1kHz
+	PWM_TimeBaseInitType.PWM_AutoReloadValue = 999;
 	/* 初始化TIM1*/
 	PWM_TimeBaseInit(TIM1,&PWM_TimeBaseInitType);
 	/* 配置为PWM输出通道为1通道*/
-	OutInit.PWM_Channel = PWM_Channel_1;
+	OutInit.PWM_Channel = PWM_Channel_3;
 	/* 配置为PWM输出模式 */	
 	OutInit.PWM_OCMode = TIM_OCMode_PWM1;
 	/* 配置输出和互补输出 */
@@ -36,7 +38,7 @@ void pwm_init(void)
 	OutInit.PWM_OCIdleState = PWM_OCIdleState_Low;
 	OutInit.PWM_OCNIdleState = PWM_OCNIdleState_Low;
 	/* 配置PWM输出的占空比 P = (PWM_OCValue+1) / (PWM_AutoReloadValue+1)*/	
-	OutInit.PWM_OCValue = 0;
+	OutInit.PWM_OCValue = 500;
     /* 配置PWM比较输出极性*/	
 	OutInit.PWM_OCPolarity = PWM_OCPolarity_High;
     OutInit.PWM_OCNPolarity = PWM_OCNPolarity_High;
@@ -48,7 +50,7 @@ void pwm_init(void)
 
 void pwm_set_duty(uint16_t duty)
 {
-    if (duty > 1000) duty = 1000;
+    if (duty > 999) duty = 999;
     // // OCR1 的值直接决定高电平时间
     PWM_SetOCxValue(TIM1, PWM_Channel_3, duty);
 }
