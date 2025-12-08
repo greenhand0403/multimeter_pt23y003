@@ -48,27 +48,31 @@ void SysTick_Handler(void)
   if (s_ms_delay!= 0x00) 
     s_ms_delay--;
 }
-extern uint16_t soft_pwm_time;
-extern volatile uint16_t soft_pwm_set_angle;
+extern volatile uint16_t pb5_high_tick; // 达到持续时间后，电平变为低电平
+static uint16_t tick = 0;
 void TIM2_Handler(void)
 {
-    if (soft_pwm_time == 0)
+    // ======================
+    // PB5: 舵机软件 PWM (1kHz)
+    // ======================
+    if(TIM_GetFlagStatus(TIM2,TIM_FLAG_ARF)!=RESET)
     {
-        GPIO_SetBits(GPIOB,GPIO_Pin_5);
-    }else if (soft_pwm_time == soft_pwm_set_angle)
-    {
-        GPIO_ResetBits(GPIOB,GPIO_Pin_5);
+        TIM_ClearFlag(TIM2,TIM_FLAG_ARF);
+         // 1ms 周期
+        if (tick >= 100)
+        {
+            tick = 0;
+        }
+        if (tick == 0)
+        {
+            GPIO_SetBits(SOFTWARE_PWM_PIN);
+        }
+        if (tick == pb5_high_tick)
+        {
+            GPIO_ResetBits(SOFTWARE_PWM_PIN);
+        }
+        tick++;
     }
-    soft_pwm_time++;
-    if (soft_pwm_time==20000)
-    {
-        soft_pwm_time = 0;
-    }
-    
-	if(TIM_GetFlagStatus(TIM2,TIM_FLAG_ARF)!=RESET)
-	{
-		TIM_ClearFlag(TIM2,TIM_FLAG_ARF);
-	}
 }
 // 当任意按键按下时唤醒
 void EXTIA_Handler(void)

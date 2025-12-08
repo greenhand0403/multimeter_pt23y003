@@ -349,16 +349,24 @@ int main(void)
 
     system_init();
     
-    // 测试 PB4 PWM 输出控制舵机角度1kHz 30%占空比
-    pwm_init();
-    pwm_set_duty(300); // 30% 占空比 范围是0~999
-    // 测试 PB5 舵机输出控制角度30度，有bug无法驱动舵机
+    // 测试 PB5 PWM 输出控制舵机角度1kHz 50%占空比
+    // pwm_init();
+    // pwm_set_duty(127); // 50% MCU占空比输出范围是 0~100 trick 代表百分比，但是蓝牙传输数据是 0~255 因此需要在函数内部做一个映射
+    // 测试 PB4 舵机输出
     // servo_init();
-    // servo_set_angle(30);
-    while (1)
-    {
-        /* code */
-    }
+    // while (1)
+    // {
+    //     for (u8 i = 0; i < 180; i+=2)
+    //     {
+    //         servo_set_angle(i);
+    //         delay_ms(100);
+    //     }
+    //     for (u8 i = 180; i > 0; i-=2)
+    //     {
+    //         servo_set_angle(i);
+    //         delay_ms(100);
+    //     }
+    // }
 
     // 状态机一，等待查询到蓝牙名称合法
     while (!BLE_NAME_LEGAL)

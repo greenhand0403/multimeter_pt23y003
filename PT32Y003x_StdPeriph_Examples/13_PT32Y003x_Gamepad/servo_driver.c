@@ -1,48 +1,75 @@
 // servo_driver.c
 #include "servo_driver.h"
 
-// 内部函数：将角度转换为TIM1的OCR值
-uint16_t angle_to_ocr(uint8_t angle)
-{
-    // 系统时钟假设为48MHz
-    // Prescaler = 47 -> 计数频率 = 48MHz / 48 = 1MHz (1us per tick)
-    // 周期 20ms = 20000 us -> ARR = 19999
-    // 0.5ms = 500 us, 2.5ms = 2500 us
-    // 角度0° -> 500, 180° -> 2500
-    if (angle > 180) angle = 180;
-    return 500 + (2000 * angle) / 180; // 线性映射
-}
+#define SERVO_TIMER_PSC 47 // prescaler -> 1 MHz tick (assuming 48MHz SYSCLK)
+#define SERVO_TIMER_ARR 19999 // 20 ms period at 1MHz tick
+// 恰好映射为500us~2500us 对应 0°~180° 舵机控制的角度范围
+#define SERVO_MIN_PULSE 500 // 0 degree -> 500 us
+#define SERVO_MAX_PULSE 2500 // 180 degree -> 2500 us
 
 void servo_init(void)
 {
-    // TODO: PB5 SG90舵机驱动需要自己写，20ms周期，0.5ms~2.5ms高电平对应着舵机角度0°~180°
-    // 用TIM2基本定时器来做PWM输出，需要配置GPIO PB5输出
-	GPIO_InitTypeDef GPIO_InitStructure;				//定义一个GPIO_InitTypeDef类型的结构体
-	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_5;			//选择要控制的GPIO引脚
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OutPP;		//设置引脚模式为通用推挽输出
-	GPIO_InitStructure.GPIO_Pull = GPIO_Pull_NoPull;	//无偏置
-	GPIO_Init(GPIOB, &GPIO_InitStructure);				//调用库函数，初始化GPIO
+	GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_4, AFIO_AF_2, ENABLE); 
+    
+    // 使用定时器TIM1来做PWM输出
+    // 配置TIM1为PWM模式
+    // 配置TIM1的预分频器和自动重装载寄存器
+    // 配置TIM1的通道1为PWM模式
+    // 使能TIM1的通道1输出
+    PWM_TimeBaseInitTypeDef PWM_TimeBaseInitType;
+	PWM_OCInitTypeDef OutInit;
+	/* 时钟选择 */
+	PWM_TimeBaseInitType.PWM_ClockSource = PWM_ClockSource_SYSCLK;
+	/* 中央计数模式 -- 不开启 */
+	PWM_TimeBaseInitType.PWM_CenterAlignedMode = PWM_CenterAlignedMode_Disable;
+	/* 计数器计数模式，设置为向上计数 */
+	PWM_TimeBaseInitType.PWM_Direction = PWM_Direction_Up;
+	/* 驱动CNT计数器的时钟 = Fcksys/(psc+1)*/
+    // PSC = 47, 计数频率 = 48MHz / (47+1) = 1MHz, PWM频率 = 1MHz / 1000 = 1kHz
+	PWM_TimeBaseInitType.PWM_Prescaler = SERVO_TIMER_PSC;
+	/* 周期匹配寄存器,累计MR0+1个频率后产生一个更新或者中断 */
+	// PWM_TimeBaseInitType.PWM_AutoReloadValue = 1000;//1ms 触发一次，也就是1kHz
+	PWM_TimeBaseInitType.PWM_AutoReloadValue = SERVO_TIMER_ARR;
+	/* 初始化TIM1*/
+	PWM_TimeBaseInit(TIM1,&PWM_TimeBaseInitType);
+	/* 配置为PWM输出通道为1通道*/
+	OutInit.PWM_Channel = PWM_Channel_3;
+	/* 配置为PWM输出模式 */	
+	OutInit.PWM_OCMode = TIM_OCMode_PWM1;
+	/* 配置输出和互补输出 */
+	OutInit.PWM_OCNOutput = PWM_OCNOutput_Enable;		
+	OutInit.PWM_OCOutput = PWM_OCOutput_Disable;  
+	/* 设置PWM空闲时候的输出电平状态 */	
+	OutInit.PWM_OCIdleState = PWM_OCIdleState_Low;
+	OutInit.PWM_OCNIdleState = PWM_OCNIdleState_High;
+	/* 配置PWM输出的占空比 P = (PWM_OCValue+1) / (PWM_AutoReloadValue+1)*/	
+	OutInit.PWM_OCValue = 1500; // 初始占空比设为 1500us（90°的位置）
+    /* 配置PWM比较输出极性*/	
+	OutInit.PWM_OCPolarity = PWM_OCPolarity_High;
+    OutInit.PWM_OCNPolarity = PWM_OCNPolarity_Low;
+	/* 初始化PWM输出 */
+	PWM_OCInit(TIM1, &OutInit);
+	/* 使能PWM */
+	PWM_Cmd(TIM1,ENABLE);
+}
 
-	NVIC_InitTypeDef NVIC_InitStruct;								//定义一个NVIC_InitTypeDef类型的结构体
-	TIM_TimeBaseInitTypeDef  TIM_TimeBaseInitStruct;//定义一个NVIC_InitTypeDef类型的结构体
-	
-	TIM_TimeBaseInitStruct.TIM_Prescaler = 480-1;//48M/480=0.1MHZ
-	TIM_TimeBaseInitStruct.TIM_AutoReload = 10;	//0.1MHZ*10=1MHZ
-	TIM_TimeBaseInitStruct.TIM_Direction = TIM_Direction_Up;					 //向上计数
-	TIM_TimeBaseInit(TIM2, &TIM_TimeBaseInitStruct);									 //初始化TIM2
-	
-	TIM_ITConfig(TIM2,TIM_IT_ARI,ENABLE);									//定时中断初始化
-	
-	NVIC_InitStruct.NVIC_IRQChannel=TIM2_IRQn;								//定时中断源设置
-	NVIC_InitStruct.NVIC_IRQChannelPriority=0x00;							//中断优先级设置
-	NVIC_InitStruct.NVIC_IRQChannelCmd=ENABLE;								//使能NVIC控制器
-	NVIC_Init(&NVIC_InitStruct);															//初始化NVIC	
-	
-	TIM_Cmd(TIM2, ENABLE);																		//开启TIM2
+/* ---------- 设置 PWM 脉宽（以 timer tick 单位，这里是微秒） ---------- */
+inline void Set_Servo_Pulse_us(u16 pulse)
+{
+    /* 确保脉宽在允许范围内 */
+    if (pulse < SERVO_MIN_PULSE) pulse = SERVO_MIN_PULSE;
+    if (pulse > SERVO_MAX_PULSE) pulse = SERVO_MAX_PULSE;
+
+    /* 将 OCR1 设为 pulse （计数以 1us 为单位） */
+    TIM1->OCR3 = pulse;
+	// 等价于 PWM_SetOCxValue(TIM1, PWM_Channel_3, angle);
 }
 
 void servo_set_angle(uint8_t angle)
 {
-    // PWM_SetOCxValue(TIM1, PWM_Channel_1, angle_to_ocr(angle));
-	soft_pwm_set_angle = angle_to_ocr(angle);
+    if (angle > 180) angle = 180;
+    /* 线性映射 */
+    u32 pulse_range = (u32)SERVO_MAX_PULSE - (u32)SERVO_MIN_PULSE; // 2000
+    u32 pulse = (u32)SERVO_MIN_PULSE + ( (u32)angle * pulse_range ) / 180u;
+    Set_Servo_Pulse_us((u16)pulse);
 }
