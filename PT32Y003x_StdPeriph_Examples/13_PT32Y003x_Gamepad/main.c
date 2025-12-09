@@ -1,6 +1,6 @@
 #include "system_config.h"
 #include "delay.h"
-#include "PT32Y003x_it.h"
+// #include "PT32Y003x_it.h"
 
 // #include "pwm_driver.h"
 // #include "servo_driver.h"
@@ -18,6 +18,7 @@ volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
 volatile work_mode_t g_work_mode_prev = WORK_MODE_IDLE;
 
 // 复制串口接收区用的临时行缓冲
+#define RX_RING_SIZE 60
 #define LINE_BUF_SIZE RX_RING_SIZE
 char line_buf[LINE_BUF_SIZE];
 volatile uint16_t line_len = 0;
@@ -219,7 +220,6 @@ void PollAndProcessUARTLines(void)
         // UART_SendData(UART1, b);
 
         // 检测到 \r\n 结尾（常见的是 \r\n 两字节）&& line_len >= 2 && line_buf[line_len - 2] == '\r'
-        // 很神奇，这里面多一个判断条件 例如 g_work_mode == WORK_MODE_IDLE && 会导致后续的10字节数据包接收出错
         if (b == '\n') {
             // 去掉末尾可能的 \r
             if (line_len >= 2 && line_buf[line_len - 2] == '\r') {
@@ -236,50 +236,17 @@ void PollAndProcessUARTLines(void)
         // 表示PB4 输出PWM信号(1kHz)，总共255，所以7F代表占空比50%，95是校验和01+14+7F+01
         // 判断数据包头是否符合协议格式 55 AA 02 00 5A 02 00 5E FF FF
         // 表示PB5 SG90 舵机驱动信号将角度设置为90°，总共是(0°~180°)，所以5A代表90°，5E是校验和02+00+5A+02
-        else if (g_work_mode == WORK_MODE_1_SERVO && line_buf[line_len-1] == 0xff && line_buf[line_len-2] == 0xff)
+        // 移除 
+        else if (g_work_mode == WORK_MODE_1_SERVO &&line_buf[line_len-1] == 0xff && line_buf[line_len-2] == 0xff)
         {
-            // ProcessBluetoothResponse(line_buf); // 建议把行内容传给处理函数
-            // for (int j = line_len - 1; j >= 0; j--)
-            // {
-            //     UART_SendData(UART1, line_buf[rx_head - j]);
-            //     while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
-            // }
-            // // 测试索引值
-            // // rx_tail = rx_head;
-            // line_len = 0;
-            
-            // __disable_irq();
-
-            // for (int j = 1; j <= 10; j++)
+            // 打印接收到的完整协议包
+            for (int j = 0; j < 10; j++)
             {
-                // uint8_t i = (rx_head - line_len + j ) % LINE_BUF_SIZE;
-                // UART_SendData(UART1, line_buf[i]);
-                // while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
+                UART_SendData(UART1, line_buf[j+10*count]);
+                while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
             }
-            // 问题三，3次发送10字节包，分别打印0C 16 20是什么原因？
-            UART_SendData(UART1, rx_head);
-            while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
-            UART_SendData(UART1, rx_tail);
-            while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
-            // 问题二编译报错
-            // UART_SendData(UART1, line_len);
-            // while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
-
-            // 测试索引值
-            // rx_tail = rx_head;
-            // line_len = 0;
-            // __enable_irq();
-
-            // 问题一 测试通过 可用
-            // for (int j = 0; j < 10; j++)
-            // {
-            //     UART_SendData(UART1, line_buf[j+10*count]);
-            //     while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
-            // }
-            // count = (count + 1) % (LINE_BUF_SIZE/10);
+            count = (count + 1) % (LINE_BUF_SIZE/10);
         }
-    
-        
     }
     
 }
@@ -499,7 +466,7 @@ void assert_failed(u8* file, u32 line)
 {
 	/* User can add his own implementation to report the file name and line number,
 	   ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-	printf("Wrong parameters value: file %s on line %ld\r\n", file, line);
+	// printf("Wrong parameters value: file %s on line %ld\r\n", file, line);
 	/* Infinite loop */
 	while (1)
 	{
