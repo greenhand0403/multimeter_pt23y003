@@ -1,6 +1,5 @@
 #include "system_config.h"
 #include "delay.h"
-// #include "PT32Y003x_it.h"
 
 // #include "pwm_driver.h"
 // #include "servo_driver.h"
@@ -18,8 +17,7 @@ volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
 volatile work_mode_t g_work_mode_prev = WORK_MODE_IDLE;
 
 // 复制串口接收区用的临时行缓冲
-#define RX_RING_SIZE 60
-#define LINE_BUF_SIZE RX_RING_SIZE
+#define LINE_BUF_SIZE 60
 char line_buf[LINE_BUF_SIZE];
 volatile uint16_t line_len = 0;
 
@@ -193,121 +191,115 @@ void enter_sleep_mode(void)
     last_activity_time = s_ms_ticks;
     UART_SendString(UART1, "WAKE UP\r\n");
 }
-uint8_t count = 0;
-// uint8_t hit_head = 0;
-// uint8_t hit_tail = 0;
-// uint8_t receive_buffer[10] = {0x55, 0xAA, 0x01, 0x14, 0x7F, 0x01, 0x00, 0x95, 0xFF, 0xFF};
+#define PACKET_SIZE 10
+#define PROTOCOL_HEADER_H 0x55
+#define PROTOCOL_HEADER_L 0xAA
+
+void ParseBinaryPacket(void)
+{
+    static uint8_t state = 0;
+    static uint8_t index = 0;
+    static uint8_t packet[PACKET_SIZE];
+
+    while (rx_tail != rx_head)
+    {
+        uint8_t b = rx_ring[rx_tail];
+        rx_tail = (rx_tail + 1) % LINE_BUF_SIZE;
+
+        switch (state)
+        {
+        case 0: // 等 55
+            if (b == PROTOCOL_HEADER_H)
+            {
+                packet[0] = b;
+                index = 1;
+                state = 1;
+            }
+            break;
+
+        case 1: // 等 AA
+            if (b == PROTOCOL_HEADER_L)
+            {
+                packet[1] = b;
+                index = 2;
+                state = 2;
+            }
+            else
+            {
+                state = 0; // 回到初始状态
+            }
+            break;
+
+        case 2: // 收集剩余 8 字节
+            packet[index++] = b;
+
+            if (index == PACKET_SIZE)
+            {
+                // ==== 这里处理一个完整包 ====
+                // 打印包内容用于调试
+                for (int i = 0; i < PACKET_SIZE; i++)
+                {
+                    UART_SendData(UART1, packet[i]);
+                    while (!UART_GetFlagStatus(UART1, UART_FLAG_TXE));
+                }
+
+                // 根据协议解析
+                uint8_t cmd  = packet[2];
+                uint8_t data = packet[4];
+
+                // 示例：PWM 指令
+                if (cmd == 0x01)
+                {
+                    pwm_set_duty(data);
+                }
+                // 示例：舵机指令
+                else if (cmd == 0x02)
+                {
+                    if (data > 180) data = 180;
+                    servo_set_angle(data);
+                }
+
+                // 重置
+                state = 0;
+                index = 0;
+            }
+            break;
+        }
+    }
+}
+
 void PollAndProcessUARTLines(void)
 {
-    uint16_t tmp = line_len;
+    // uint16_t tmp = line_len;
     // 从环形缓冲读取字节，拼成行
     while (rx_tail != rx_head) {
         uint8_t b = rx_ring[rx_tail];
         rx_tail = (rx_tail + 1) % LINE_BUF_SIZE;
 
-        // 限制行长度，防止越界
-        if (line_len < LINE_BUF_SIZE - 1) {
-            line_buf[line_len++] = (char)b;
-            // rx_buffer[rx_index++] = b;
-        } else {
-            // 行太长，丢弃并重置
-            line_len = 0;
-        }
+        line_buf[line_len] = (char)b;
 
-        // 测试，直接透传 等待 UART1 发送缓冲区为空
-        // while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
-        // 直接发送原始字节
-        // UART_SendData(UART1, b);
-
-        // 检测到 \r\n 结尾（常见的是 \r\n 两字节）&& line_len >= 2 && line_buf[line_len - 2] == '\r'
         if (b == '\n') {
             // 去掉末尾可能的 \r
-            if (line_len >= 2 && line_buf[line_len - 2] == '\r') {
-                line_buf[line_len - 2] = '\0';
-            } else {
+            if (line_len >= 1 && line_buf[line_len - 1] == '\r') {
                 line_buf[line_len - 1] = '\0';
+            } else {
+                line_buf[line_len] = '\0';
             }
 
             // 设置标志或直接调用处理函数
             ProcessBluetoothResponse(line_buf); // 建议把行内容传给处理函数
             line_len = 0;
+            continue;
         }
-        // 判断数据包头是否符合协议格式 55 AA 01 14 7F 01 00 95 FF FF
-        // 表示PB4 输出PWM信号(1kHz)，总共255，所以7F代表占空比50%，95是校验和01+14+7F+01
-        // 判断数据包头是否符合协议格式 55 AA 02 00 5A 02 00 5E FF FF
-        // 表示PB5 SG90 舵机驱动信号将角度设置为90°，总共是(0°~180°)，所以5A代表90°，5E是校验和02+00+5A+02
-        // 移除 
-        else if (g_work_mode == WORK_MODE_1_SERVO &&line_buf[line_len-1] == 0xff && line_buf[line_len-2] == 0xff)
-        {
-            // 打印接收到的完整协议包
-            for (int j = 0; j < 10; j++)
-            {
-                UART_SendData(UART1, line_buf[j+10*count]);
-                while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
-            }
-            count = (count + 1) % (LINE_BUF_SIZE/10);
+        // 限制行长度，防止越界
+        if (line_len < LINE_BUF_SIZE - 1) {
+            line_len++;
+        } else {
+            // 行太长，丢弃并重置
+            line_len = 0;
         }
     }
     
-}
-// 新增函数：尝试从环形缓冲区中解析一个完整的协议包
-void TryParseProtocolPacket(void)
-{
-    // 简单的状态机解析 解析协议包
-    uint8_t parse_state = 0;
-    uint8_t packet_buffer[10] = {0};
-    uint8_t packet_index = 0;
-
-    while (rx_tail != rx_head) {
-        uint8_t byte = rx_ring[rx_tail];
-        rx_tail = (rx_tail + 1) % RX_RING_SIZE;
-
-        switch (parse_state) {
-            case 0: // 寻找包头
-                if (byte == PROTOCOL_HEADER_H) {
-                    parse_state = 1;
-                    packet_buffer[0] = byte;
-                    packet_index = 1;
-                }
-                break;
-            case 1: // 检查第二个包头字节
-                if (byte == PROTOCOL_HEADER_L) {
-                    packet_buffer[1] = byte;
-                    parse_state = 2;
-                    packet_index = 2;
-                } else {
-                    parse_state = 0; // 复位
-                }
-                break;
-            default:
-                packet_buffer[packet_index] = byte;
-                packet_index++;
-                if (packet_index == 10) {
-                    // 尝试校验包尾
-                    // if (packet_buffer[8] == PROTOCOL_TAIL_H && packet_buffer[9] == PROTOCOL_TAIL_L) {
-                        // 包完整，进行处理
-                        // TODO: 这里可以加CRC校验
-
-                        // 根据指令类型处理
-                        // if (packet_buffer[3] == 0x01) {
-                            // PWM 控制 默认控制PB4
-                            // g_pwm_duty = packet_buffer[4] * 4; // 占空比值 (0-1000)
-                            // pwm_set_duty(packet_buffer[4] * 4);
-                        // } else if (packet_buffer[3] == 0x02) {
-                            // 舵机控制 默认控制PB5
-                            // g_servo_angle = packet_buffer[4]; // 角度 (0-180)
-                        //     if (g_servo_angle > 180) g_servo_angle = 180;
-                        //     servo_set_angle(g_servo_angle);
-
-                        // }
-                    // }
-                    // 无论校验成功与否，都复位状态机
-                    parse_state = 0;
-                    packet_index = 0;
-                }
-                break;
-        }
-    }
 }
 // ===== 主函数 =====
 int main(void)
@@ -316,25 +308,6 @@ int main(void)
 
     system_init();
     
-    // 测试 PB5 PWM 输出控制舵机角度1kHz 50%占空比
-    // pwm_init();
-    // pwm_set_duty(127); // 50% MCU占空比输出范围是 0~100 trick 代表百分比，但是蓝牙传输数据是 0~255 因此需要在函数内部做一个映射
-    // 测试 PB4 舵机输出
-    // servo_init();
-    // while (1)
-    // {
-    //     for (u8 i = 0; i < 180; i+=2)
-    //     {
-    //         servo_set_angle(i);
-    //         delay_ms(100);
-    //     }
-    //     for (u8 i = 180; i > 0; i-=2)
-    //     {
-    //         servo_set_angle(i);
-    //         delay_ms(100);
-    //     }
-    // }
-
     // 状态机一，等待查询到蓝牙名称合法
     while (!BLE_NAME_LEGAL)
     {
@@ -401,21 +374,9 @@ int main(void)
 
                         // TODO: 蓝牙接收器
                         // 从环形缓冲读取字节，拼成行
-                        PollAndProcessUARTLines();
-
-                        // 接收蓝牙模块发送到串口0的数据，转发到串口1调试
-                        // while(rx_index)
-                        // {
-                        //     UART_SendData(UART1,rx_buffer[i++]);
-                        //     if(i==rx_index)
-                        //     {
-                        //         i=0;
-                        //         rx_index=0;
-                        //     }
-                        // }
-                        
-                        // 新增：尝试解析二进制控制指令包
-                        // TryParseProtocolPacket();
+                        // PollAndProcessUARTLines();
+                        // 用最新的二进制状态机解包
+                        ParseBinaryPacket();
 
                     } else if (g_work_mode == WORK_MODE_2_GYRO) {
                         // 请求陀螺仪数据，填到数据包里

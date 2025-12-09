@@ -1,49 +1,11 @@
 #include "bluetooth_driver.h"
-// #include <string.h>
+#include <string.h>
 
 // uint32_t last_send_time = 0;
 
 // extern volatile uint32_t s_ms_ticks;
 extern void UART_SendString(UART_TypeDef* UARTx, const char *str);
 extern uint8_t button_get_state(void);
-static inline int my_strlen(const char *s)
-{
-    int n = 0;
-    while (*s++) n++;
-    return n;
-}
-static inline int my_strcmp(const char *a, const char *b)
-{
-    while (*a && (*a == *b)) {
-        a++; b++;
-    }
-    return (unsigned char)*a - (unsigned char)*b;
-}
-static const char* my_strstr(const char *hay, const char *needle)
-{
-    if (!*needle) return hay;
-
-    for (; *hay; hay++) {
-        if (*hay == *needle) {
-            const char *h = hay, *n = needle;
-            while (*h && *n && *h == *n) {
-                h++; n++;
-            }
-            if (!*n) return hay;
-        }
-    }
-    return 0;
-}
-static inline void my_strncpy(char *dst, const char *src, int n)
-{
-    while (n-- > 0 && (*dst++ = *src++));
-}
-static inline void my_memcpy(void *dst, const void *src, int n)
-{
-    unsigned char *d = (unsigned char*)dst;
-    const unsigned char *s = (const unsigned char*)src;
-    while (n--) *d++ = *s++;
-}
 
 /* 不要包含 <ctype.h>，使用轻量级替代以避免引入大块 libc */
 static inline int my_isxdigit(int c)
@@ -83,7 +45,7 @@ void bluetooth_send_packet(protocol_packet_t* packet)
 // ===== 发送AT命令 =====
 void bluetooth_send_at_command(const char* command)
 {
-    bluetooth_send_raw_data((uint8_t*)command, my_strlen(command));
+    bluetooth_send_raw_data((uint8_t*)command, strlen(command));
 }
 
 // ===== 初始化蓝牙模块 =====
@@ -135,7 +97,7 @@ void ProcessBluetoothResponse(char* line)
     UART_SendString(UART1, "\r\n");
 
     // 如果有模块在返回 OK，暂时忽略
-    if (my_strcmp(line, "OK") == 0) {
+    if (strcmp(line, "OK") == 0) {
         // 如果已经发送了设置名字，那么再发送复位命令
         if (g_bt_config_state == BT_CFG_STATE_SET_NAME)
         {
@@ -156,14 +118,14 @@ void ProcessBluetoothResponse(char* line)
     // }
     // 如果返回的是名称行，例如 "TM+OBTEST-1024" 或 "TM+ONBOTS-XXXX"
     // 既处理蓝牙名称查询指令的回复，也响应软复位后的蓝牙信息回复，从中检查蓝牙名称
-    if (my_strstr(line, "TM+") != NULL) {
+    if (strstr(line, "TM+") != NULL) {
         // 解析名字行
-        const char* p = my_strstr(line, "ONBOTS-");
+        const char* p = strstr(line, "ONBOTS-");
         if (p) {
             // 名字已经是 ONBOTS-xxxx，直接标记合法
-            const char* suffix = p + my_strlen("ONBOTS-");
+            const char* suffix = p + strlen("ONBOTS-");
             char name_suffix[8] = {0};
-            my_strncpy(name_suffix, suffix, 4);
+            strncpy(name_suffix, suffix, 4);
             name_suffix[4] = '\0';
             // 记录合法的 MAC 地址
             Legal_MAC[0] = (hex_to_val(name_suffix[0]) << 4) | hex_to_val(name_suffix[1]);
@@ -171,7 +133,7 @@ void ProcessBluetoothResponse(char* line)
             UART_SendString(UART1, "Legal_MAC:");
             UART_SendString(UART1, name_suffix);
             UART_SendString(UART1, "\r\n");
-            if (my_strlen(name_suffix) >= 2) {
+            if (strlen(name_suffix) >= 2) {
                 BLE_NAME_LEGAL = 1;
             }
             return; // 已处理完该行，直接返回
@@ -188,7 +150,7 @@ void ProcessBluetoothResponse(char* line)
     }
     // 下面只处理真正的 MAC 行 —— 先做一个更严格的前缀检查，避免误判
     // 例如你的模块 MAC 行是 "TB+CF7FA6F77DAE"，所以我们检查是否包含 "TB+"
-    if (my_strstr(line, "TB+") != NULL &&g_bt_config_state == BT_CFG_STATE_QUERY_MAC) {
+    if (strstr(line, "TB+") != NULL &&g_bt_config_state == BT_CFG_STATE_QUERY_MAC) {
         // 找到连续的 hex 串并取合适的 4 个字符（此处以取 run 的前 4 个并按你的要求换位为例）
         const char* hexp = line;
         while (*hexp) {
@@ -201,7 +163,7 @@ void ProcessBluetoothResponse(char* line)
                     char new_name[20];
                     const char prefix[] = "AT+BMONBOTS-";
                     char *p = new_name;
-                    my_memcpy(p, prefix, sizeof(prefix) - 1);
+                    memcpy(p, prefix, sizeof(prefix) - 1);
                     p += (sizeof(prefix) - 1);
 
                     /* 拷入 4 个后缀字符 CF7F 就变成了 ONBOTS-7FCF */
