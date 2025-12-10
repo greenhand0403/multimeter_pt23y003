@@ -1,5 +1,6 @@
 #include "system_config.h"
 #include "delay.h"
+#include <string.h>
 
 // #include "pwm_driver.h"
 // #include "servo_driver.h"
@@ -17,7 +18,7 @@ volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
 volatile work_mode_t g_work_mode_prev = WORK_MODE_IDLE;
 
 // 复制串口接收区用的临时行缓冲
-#define LINE_BUF_SIZE 60
+#define LINE_BUF_SIZE 100
 char line_buf[LINE_BUF_SIZE];
 volatile uint16_t line_len = 0;
 
@@ -194,7 +195,8 @@ void enter_sleep_mode(void)
 #define PACKET_SIZE 10
 #define PROTOCOL_HEADER_H 0x55
 #define PROTOCOL_HEADER_L 0xAA
-
+volatile uint8_t debug_packet_ready = 0;
+volatile uint8_t debug_packet[10];
 void ParseBinaryPacket(void)
 {
     static uint8_t state = 0;
@@ -215,6 +217,10 @@ void ParseBinaryPacket(void)
                 index = 1;
                 state = 1;
             }
+            else
+            {
+                continue;
+            }
             break;
 
         case 1: // 等 AA
@@ -227,37 +233,39 @@ void ParseBinaryPacket(void)
             else
             {
                 state = 0; // 回到初始状态
+                // 如果当前字节恰好是 55，则让状态机重新从 state 1 进入
+                if (b == PROTOCOL_HEADER_H)
+                {
+                    packet[0] = b;
+                    index = 1;
+                    state = 1;
+                }
             }
             break;
 
-        case 2: // 收集剩余 8 字节
+        case 2:
             packet[index++] = b;
-
-            if (index == PACKET_SIZE)
+            if (index >= PACKET_SIZE)
             {
                 // ==== 这里处理一个完整包 ====
-                // 打印包内容用于调试
-                for (int i = 0; i < PACKET_SIZE; i++)
-                {
-                    UART_SendData(UART1, packet[i]);
-                    while (!UART_GetFlagStatus(UART1, UART_FLAG_TXE));
-                }
+                memcpy(debug_packet, packet, 10);
+                debug_packet_ready = 1;
 
                 // 根据协议解析
                 uint8_t cmd  = packet[2];
                 uint8_t data = packet[4];
 
-                // 示例：PWM 指令
-                if (cmd == 0x01)
-                {
-                    pwm_set_duty(data);
-                }
-                // 示例：舵机指令
-                else if (cmd == 0x02)
-                {
-                    if (data > 180) data = 180;
-                    servo_set_angle(data);
-                }
+                // // 示例：PWM 指令
+                // if (cmd == 0x01)
+                // {
+                //     pwm_set_duty(data);
+                // }
+                // // 示例：舵机指令
+                // else if (cmd == 0x02)
+                // {
+                //     if (data > 180) data = 180;
+                //     servo_set_angle(data);
+                // }
 
                 // 重置
                 state = 0;
@@ -270,7 +278,6 @@ void ParseBinaryPacket(void)
 
 void PollAndProcessUARTLines(void)
 {
-    // uint16_t tmp = line_len;
     // 从环形缓冲读取字节，拼成行
     while (rx_tail != rx_head) {
         uint8_t b = rx_ring[rx_tail];
@@ -344,7 +351,6 @@ int main(void)
             else
             {
                 // 用户可能连接手柄后主动切换工作模式，所有需要每次都判断工作模式
-                // 已经有延迟20ms了
                 g_work_mode = detect_work_mode();
                 // 首次进入工作模式或者检测到工作模式切换，需要初始化
                 if (g_work_mode_prev==WORK_MODE_IDLE)
@@ -385,6 +391,16 @@ int main(void)
                         if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
                             // send_gyro_data_packet();
                             g_last_packet_time = s_ms_ticks;
+                        }
+                    }
+
+                    if (debug_packet_ready){
+                        debug_packet_ready = 0;
+                        // 打印包内容用于调试
+                        for (int i = 0; i < PACKET_SIZE; i++)
+                        {
+                            UART_SendData(UART1, debug_packet[i]);
+                            while (!UART_GetFlagStatus(UART1, UART_FLAG_TXE));
                         }
                     }
                 }
