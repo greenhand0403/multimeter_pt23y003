@@ -1,6 +1,7 @@
 // pwm_driver.c
 #include "pwm_driver.h"
-volatile uint16_t pb5_high_tick;
+#include "PT32Y003x_it.h"
+uint16_t pb5_high_tick;
 
 void pwm_init(void)
 {
@@ -11,28 +12,40 @@ void pwm_init(void)
 	GPIO_InitStructure.GPIO_Pull = GPIO_Pull_NoPull;	//无偏置
 	GPIO_Init(GPIOB, &GPIO_InitStructure);				//调用库函数，初始化GPIO
 
-	GPIO_ResetBits(GPIOB, GPIO_Pin_5);
+	// GPIO_ResetBits(GPIOB, GPIO_Pin_5);
 
-	NVIC_InitTypeDef NVIC_InitStruct;								//定义一个NVIC_InitTypeDef类型的结构体
+	NVIC_InitTypeDef NVIC_InitStruct;				//定义一个NVIC_InitTypeDef类型的结构体
 	TIM_TimeBaseInitTypeDef  TIM_TimeBaseInitStruct;//定义一个NVIC_InitTypeDef类型的结构体
 	
 	TIM_TimeBaseInitStruct.TIM_Prescaler = 48-1;//48M/48=1MHZ 1us分频
 	TIM_TimeBaseInitStruct.TIM_AutoReload = 10-1;// 0.01ms 10us 触发中断计数一次
-	TIM_TimeBaseInitStruct.TIM_Direction = TIM_Direction_Up;					 //向上计数
-	TIM_TimeBaseInit(TIM2, &TIM_TimeBaseInitStruct);									 //初始化TIM2
+	TIM_TimeBaseInitStruct.TIM_Direction = TIM_Direction_Up;				//向上计数
+	TIM_TimeBaseInit(TIM2, &TIM_TimeBaseInitStruct);						//初始化TIM2
 	
+	// TIM_ClearFlag(TIM2,TIM_FLAG_ARF);									    //清除更新中断标志位
 	TIM_ITConfig(TIM2,TIM_IT_ARI,ENABLE);									//定时中断初始化
 
 	NVIC_InitStruct.NVIC_IRQChannel=TIM2_IRQn;								//定时中断源设置
-	NVIC_InitStruct.NVIC_IRQChannelPriority=0x00;							//中断优先级设置
+	NVIC_InitStruct.NVIC_IRQChannelPriority=0x01;							//中断优先级设置
 	NVIC_InitStruct.NVIC_IRQChannelCmd=ENABLE;								//使能NVIC控制器
-	NVIC_Init(&NVIC_InitStruct);															//初始化NVIC	
+	NVIC_Init(&NVIC_InitStruct);											//初始化NVIC	
 	
-	TIM_Cmd(TIM2, ENABLE);																		//开启TIM2
+	// TIM_Cmd(TIM2, ENABLE);													//开启TIM2
 }
 
 void pwm_set_duty(uint16_t duty)
 {
+	if (duty<=0)
+	{
+		TIM_Cmd(TIM2, DISABLE);
+		GPIO_ResetBits(SOFTWARE_PWM_PIN);
+	}
+	else if(!TIM_GetFlagStatus(TIM2, TIM_FLAG_ARF))
+	{
+		TIM_Cmd(TIM2, ENABLE);
+	}
+	
+
 	if (duty > 255) duty = 255;
 	// 将0~255换算成0~100的整数
     pb5_high_tick = duty * 100 / 255;

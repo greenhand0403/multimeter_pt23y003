@@ -22,11 +22,15 @@
 /* Includes ------------------------------------------------------------------*/
 #include "PT32Y003x.h"
 
-#define RX_RING_SIZE 100
+#define RX_RING_SIZE 120
 #define SOFTWARE_PWM_PIN  GPIOB, GPIO_Pin_5  // PB5: 软件 PWM (1kHz)
 
 /* Exported types ------------------------------------------------------------*/
 /* Exported constants --------------------------------------------------------*/
+
+extern volatile uint16_t rx_head;
+extern volatile uint16_t rx_tail;
+extern volatile uint8_t rx_ring[RX_RING_SIZE];
 /* Exported macro ------------------------------------------------------------*/
 /* Exported functions ------------------------------------------------------- */
 

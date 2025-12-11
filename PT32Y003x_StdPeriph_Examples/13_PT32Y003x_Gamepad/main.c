@@ -1,6 +1,7 @@
 #include "system_config.h"
 #include "delay.h"
 #include <string.h>
+#include "PT32Y003x_it.h"
 
 // #include "pwm_driver.h"
 // #include "servo_driver.h"
@@ -18,13 +19,9 @@ volatile work_mode_t g_work_mode = WORK_MODE_IDLE;
 volatile work_mode_t g_work_mode_prev = WORK_MODE_IDLE;
 
 // 复制串口接收区用的临时行缓冲
-#define LINE_BUF_SIZE 100
+#define LINE_BUF_SIZE RX_RING_SIZE
 char line_buf[LINE_BUF_SIZE];
 volatile uint16_t line_len = 0;
-
-extern volatile uint16_t rx_head;
-extern volatile uint16_t rx_tail;
-extern volatile uint8_t rx_ring[LINE_BUF_SIZE];
 
 // volatile uint16_t g_pwm_duty = 0;
 // volatile uint8_t g_servo_angle = 90; // 默认90度
@@ -196,18 +193,41 @@ void enter_sleep_mode(void)
 #define PROTOCOL_HEADER_H 0x55
 #define PROTOCOL_HEADER_L 0xAA
 volatile uint8_t debug_packet_ready = 0;
-volatile uint8_t debug_packet[10];
+uint8_t debug_packet[10];
+uint8_t count = 0;
+
+
 void ParseBinaryPacket(void)
 {
+
     static uint8_t state = 0;
     static uint8_t index = 0;
-    static uint8_t packet[PACKET_SIZE];
-
+    static uint8_t packet[LINE_BUF_SIZE];
     while (rx_tail != rx_head)
     {
         uint8_t b = rx_ring[rx_tail];
         rx_tail = (rx_tail + 1) % LINE_BUF_SIZE;
+        // 硬解析数组
+        // line_buf[line_len] = (char)b;
+        // if (line_buf[line_len] == 0xff && line_buf[line_len-1] == 0xff)
+        // {
+        //     for (int j = 0; j < 10; j++)
+        //     {
+        //         UART_SendData(UART1, line_buf[j+10*count]);
+        //         while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
+        //     }
 
+        //     count = (count + 1) % (LINE_BUF_SIZE / 10);
+        // }
+
+        // // 限制行长度，防止越界
+        // if (line_len < LINE_BUF_SIZE - 1) {
+        //     line_len++;
+        // } else {
+        //     // 行太长，丢弃并重置
+        //     line_len = 0;
+        // }
+        // 二进制接收状态机
         switch (state)
         {
         case 0: // 等 55
@@ -217,10 +237,10 @@ void ParseBinaryPacket(void)
                 index = 1;
                 state = 1;
             }
-            else
-            {
-                continue;
-            }
+            // else
+            // {
+            //     continue;
+            // }
             break;
 
         case 1: // 等 AA
@@ -230,17 +250,17 @@ void ParseBinaryPacket(void)
                 index = 2;
                 state = 2;
             }
-            else
-            {
-                state = 0; // 回到初始状态
-                // 如果当前字节恰好是 55，则让状态机重新从 state 1 进入
-                if (b == PROTOCOL_HEADER_H)
-                {
-                    packet[0] = b;
-                    index = 1;
-                    state = 1;
-                }
-            }
+            // else
+            // {
+            //     state = 0; // 回到初始状态
+            //     // 如果当前字节恰好是 55，则让状态机重新从 state 1 进入
+            //     if (b == PROTOCOL_HEADER_H)
+            //     {
+            //         packet[0] = b;
+            //         index = 1;
+            //         state = 1;
+            //     }
+            // }
             break;
 
         case 2:
@@ -255,17 +275,17 @@ void ParseBinaryPacket(void)
                 uint8_t cmd  = packet[2];
                 uint8_t data = packet[4];
 
-                // // 示例：PWM 指令
-                // if (cmd == 0x01)
-                // {
-                //     pwm_set_duty(data);
-                // }
-                // // 示例：舵机指令
-                // else if (cmd == 0x02)
-                // {
-                //     if (data > 180) data = 180;
-                //     servo_set_angle(data);
-                // }
+                // 示例：PWM 指令
+                if (cmd == 0x01)
+                {
+                    pwm_set_duty(data);
+                }
+                // 示例：舵机指令
+                else if (cmd == 0x02)
+                {
+                    if (data > 180) data = 180;
+                    servo_set_angle(data);
+                }
 
                 // 重置
                 state = 0;
@@ -274,6 +294,7 @@ void ParseBinaryPacket(void)
             break;
         }
     }
+
 }
 
 void PollAndProcessUARTLines(void)
@@ -328,6 +349,7 @@ int main(void)
     UART_SendString(UART1, "BLE NAME OK\r\n");
     // 记录离线时间
     last_activity_time = s_ms_ticks;
+
     while (1)
     {
         // 判断主机连接手柄
@@ -346,6 +368,11 @@ int main(void)
                 }
                 UART_SendString(UART1, "FIRST CONNECT\r\n");
                 g_work_mode_prev = WORK_MODE_IDLE;
+                
+    // 强烈建议清除掉旧的接收缓存
+    rx_head = rx_tail = 0;
+    line_len = 0;
+
             }
             // 已连接，进行消息发送和处理
             else
@@ -355,6 +382,8 @@ int main(void)
                 // 首次进入工作模式或者检测到工作模式切换，需要初始化
                 if (g_work_mode_prev==WORK_MODE_IDLE)
                 {
+                    // 清除接收缓存
+                    // rx_tail = rx_head;
                     if (g_work_mode == WORK_MODE_1_SERVO) {
                         // 初始化按键
                         button_init();
@@ -397,11 +426,11 @@ int main(void)
                     if (debug_packet_ready){
                         debug_packet_ready = 0;
                         // 打印包内容用于调试
-                        for (int i = 0; i < PACKET_SIZE; i++)
-                        {
-                            UART_SendData(UART1, debug_packet[i]);
-                            while (!UART_GetFlagStatus(UART1, UART_FLAG_TXE));
-                        }
+                        // for (int i = 0; i < PACKET_SIZE; i++)
+                        // {
+                        //     UART_SendData(UART1, debug_packet[i]);
+                        //     while (!UART_GetFlagStatus(UART1, UART_FLAG_TXE));
+                        // }
                     }
                 }
                 else

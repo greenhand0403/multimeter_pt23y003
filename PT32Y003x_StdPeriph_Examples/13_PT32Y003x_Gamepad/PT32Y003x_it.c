@@ -48,7 +48,7 @@ void SysTick_Handler(void)
   if (s_ms_delay!= 0x00) 
     s_ms_delay--;
 }
-extern volatile uint16_t pb5_high_tick; // 达到持续时间后，电平变为低电平
+extern uint16_t pb5_high_tick; // 达到持续时间后，电平变为低电平
 static uint16_t tick = 0;
 void TIM2_Handler(void)
 {
