@@ -228,7 +228,7 @@ void send_connect_packet(void)
     
     bluetooth_send_packet(&packet);
 }
-
+// TODO: 代码整合？这几个发送数据包的函数结构很类似，可以进一步重新定义一个函数？
 // ===== 发送按键状态包 =====
 void send_key_status_packet(void)
 {
@@ -285,5 +285,36 @@ void bluetooth_send_first_connect_packet(void)
     packet.crc_low = (uint8_t)(crc & 0xFF);
     packet.tail_h = PROTOCOL_TAIL_H;
     packet.tail_l = PROTOCOL_TAIL_L;
+    bluetooth_send_packet(&packet);
+}
+
+void send_gyro_data_packet(uint8_t roll_u8, uint8_t pitch_u8, uint8_t yaw_u8)
+{
+    protocol_packet_t packet;
+
+    packet.header_h = PROTOCOL_HEADER_H;
+    packet.header_l = PROTOCOL_HEADER_L;
+    packet.cmd_type = CMD_TYPE_STATUS; // 你协议里陀螺仪也是 0x02 :contentReference[oaicite:6]{index=6}
+
+    packet.data[0] = Legal_MAC[0];
+    packet.data[1] = Legal_MAC[1];
+    packet.data[2] = 0x00;        // 预留/保留字节（与示例“02 AA BB 00 ...”一致）
+    packet.data[3] = roll_u8;     // -90~+90映射到0~180
+    packet.data[4] = pitch_u8;
+    packet.data[5] = yaw_u8;
+
+    packet.seq_num = g_seq_num++;
+
+    uint16_t crc = packet.cmd_type
+                 + packet.data[0] + packet.data[1] + packet.data[2]
+                 + packet.data[3] + packet.data[4] + packet.data[5]
+                 + packet.seq_num;
+
+    packet.crc_high = (uint8_t)(crc >> 8);
+    packet.crc_low  = (uint8_t)(crc & 0xFF);
+
+    packet.tail_h = PROTOCOL_TAIL_H;
+    packet.tail_l = PROTOCOL_TAIL_L;
+
     bluetooth_send_packet(&packet);
 }

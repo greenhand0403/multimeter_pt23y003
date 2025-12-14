@@ -48,7 +48,8 @@ extern void bluetooth_configure_name_start(void);
 extern void bluetooth_send_first_connect_packet(void);
 // ===== 发送按键状态数据包 =====
 extern void send_key_status_packet(void);
-
+// ===== 发送陀螺仪数据包 =====
+extern void send_gyro_data_packet(uint8_t roll_u8, uint8_t pitch_u8, uint8_t yaw_u8);
 // ===== 处理蓝牙响应 =====
 extern void ProcessBluetoothResponse(char *line);
 
@@ -396,6 +397,7 @@ int main(void)
                         UART_SendString(UART1, "gyro_init\r\n");
                         // 初始化陀螺仪I2C接口
                         gyro_init();
+                        // 测试：读取WHO_AM_I
                         gyro_first_read();
                     }
                     g_work_mode_prev = g_work_mode;
@@ -420,10 +422,16 @@ int main(void)
                     } else if (g_work_mode == WORK_MODE_2_GYRO) {
                         // 每20ms发送一次陀螺仪数据包
                         if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
-                            // 请求陀螺仪数据，填到数据包里
-                            // request_gyro_data();
-                            // 发送陀螺仪数据
-                            // send_gyro_data_packet();
+                            // 1) 更新一次陀螺仪（读I2C + 算角度）
+                            gyro_update_20ms();
+
+                            // 2) 取映射后的0~180
+                            uint8_t roll_u8, pitch_u8, yaw_u8;
+                            gyro_get_mapped_angles(&roll_u8, &pitch_u8, &yaw_u8);
+
+                            // 3) 发包
+                            send_gyro_data_packet(roll_u8, pitch_u8, yaw_u8);
+
                             g_last_packet_time = s_ms_ticks;
                         }
                     }

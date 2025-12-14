@@ -12,5 +12,8 @@
 
 extern void gyro_init(void);
 extern void gyro_first_read(void);
+// gyro_driver.h 追加
+extern void gyro_update_20ms(void);                       // 20ms更新一次内部yaw积分
+extern void gyro_get_mapped_angles(uint8_t* r, uint8_t* p, uint8_t* y); // 输出0~180
 
 #endif
