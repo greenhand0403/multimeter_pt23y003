@@ -1,6 +1,5 @@
 #include "bluetooth_driver.h"
 #include <string.h>
-
 // uint32_t last_send_time = 0;
 
 // extern volatile uint32_t s_ms_ticks;
@@ -8,7 +7,7 @@ extern void UART_SendString(UART_TypeDef* UARTx, const char *str);
 extern uint8_t button_get_state(void);
 
 /* 不要包含 <ctype.h>，使用轻量级替代以避免引入大块 libc */
-static inline int my_isxdigit(int c)
+static int isxdigit(int c)
 {
     return ( (c >= '0' && c <= '9') ||
              (c >= 'A' && c <= 'F') ||
@@ -60,6 +59,7 @@ void bluetooth_init(void)
     
     nvic.NVIC_IRQChannel = UART0_IRQn;
     nvic.NVIC_IRQChannelCmd = ENABLE;
+    // 优先级需比定时器高（此值应该小一点），否则会导致定时器中断先执行，导致蓝牙模块无法正常工作
     nvic.NVIC_IRQChannelPriority = 0x01;
     NVIC_Init(&nvic);
     UART_ITConfig(UART0, UART_IT_RXNEI, ENABLE);
@@ -154,16 +154,16 @@ void ProcessBluetoothResponse(char* line)
         // 找到连续的 hex 串并取合适的 4 个字符（此处以取 run 的前 4 个并按你的要求换位为例）
         const char* hexp = line;
         while (*hexp) {
-            if (my_isxdigit((unsigned char)*hexp)) {
+            if (isxdigit((unsigned char)*hexp)) {
                 const char* start = hexp;
                 int cnt = 0;
-                while (my_isxdigit((unsigned char)*hexp)) { cnt++; hexp++; }
+                while (isxdigit((unsigned char)*hexp)) { cnt++; hexp++; }
                 if (cnt >= 4) {
                     // 这里选择使用 run 的前 4 个字符作为基准（如 CF7F -> 7FCF）
                     char new_name[20];
                     const char prefix[] = "AT+BMONBOTS-";
                     char *p = new_name;
-                    memcpy(p, prefix, sizeof(prefix) - 1);
+                     memcpy(p, prefix, sizeof(prefix) - 1);
                     p += (sizeof(prefix) - 1);
 
                     /* 拷入 4 个后缀字符 CF7F 就变成了 ONBOTS-7FCF */

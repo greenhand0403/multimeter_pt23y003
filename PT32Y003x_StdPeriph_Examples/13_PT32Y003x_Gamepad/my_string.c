@@ -1,3 +1,4 @@
+#include "my_string.h"
 int my_strlen(const char *s)
 {
     int n = 0;

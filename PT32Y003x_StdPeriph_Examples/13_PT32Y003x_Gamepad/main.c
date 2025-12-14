@@ -1,8 +1,10 @@
 #include "system_config.h"
 #include "delay.h"
 #include <string.h>
-#include "PT32Y003x_it.h"
+// #include "my_string.h"
 
+#include "PT32Y003x_it.h"
+#include "gyro_driver.h"
 // #include "pwm_driver.h"
 // #include "servo_driver.h"
 // 蓝牙名称是否合法 1 则合法
@@ -335,7 +337,7 @@ int main(void)
     uint16_t i = 0;
 
     system_init();
-    
+    UART_SendString(UART1, "INIT OK\r\n");
     // 状态机一，等待查询到蓝牙名称合法
     while (!BLE_NAME_LEGAL)
     {
@@ -346,7 +348,7 @@ int main(void)
         // 蓝牙名称检查循环
         bluetooth_configure_name_start();
     }
-    UART_SendString(UART1, "BLE NAME OK\r\n");
+    // UART_SendString(UART1, "BLE NAME OK\r\n");
     // 记录离线时间
     last_activity_time = s_ms_ticks;
 
@@ -361,7 +363,7 @@ int main(void)
                 g_bt_state = BT_STATE_CONNECTED;
                 // for (int k = 0; k < 2; k++)
                 {
-                    delay_ms(500);
+                    delay_ms(800);//500ms有时收不到消息，所以延长一点
                     // 发送第一条上线消息
                     bluetooth_send_first_connect_packet();
                     // delay_ms(200);
@@ -369,9 +371,9 @@ int main(void)
                 UART_SendString(UART1, "FIRST CONNECT\r\n");
                 g_work_mode_prev = WORK_MODE_IDLE;
                 
-    // 强烈建议清除掉旧的接收缓存
-    rx_head = rx_tail = 0;
-    line_len = 0;
+                // 强烈建议清除掉旧的接收缓存。但是实际上后面证明是中断 优先级 的问题导致接收数据包 粘包
+                rx_head = rx_tail = 0;
+                line_len = 0;
 
             }
             // 已连接，进行消息发送和处理
@@ -391,8 +393,10 @@ int main(void)
                         pwm_init();
                         servo_init();
                     } else if (g_work_mode == WORK_MODE_2_GYRO) {
+                        UART_SendString(UART1, "gyro_init\r\n");
                         // 初始化陀螺仪I2C接口
-                        // gyro_init();
+                        gyro_init();
+                        gyro_first_read();
                     }
                     g_work_mode_prev = g_work_mode;
                 }
@@ -407,17 +411,18 @@ int main(void)
                             g_last_packet_time = s_ms_ticks;
                         }
 
-                        // TODO: 蓝牙接收器
+                        // 蓝牙接收器
                         // 从环形缓冲读取字节，拼成行
                         // PollAndProcessUARTLines();
                         // 用最新的二进制状态机解包
                         ParseBinaryPacket();
 
                     } else if (g_work_mode == WORK_MODE_2_GYRO) {
-                        // 请求陀螺仪数据，填到数据包里
-                        // request_gyro_data();
                         // 每20ms发送一次陀螺仪数据包
                         if (s_ms_ticks - g_last_packet_time >= PACKET_SEND_INTERVAL_MS) {
+                            // 请求陀螺仪数据，填到数据包里
+                            // request_gyro_data();
+                            // 发送陀螺仪数据
                             // send_gyro_data_packet();
                             g_last_packet_time = s_ms_ticks;
                         }
@@ -472,6 +477,7 @@ void assert_failed(u8* file, u32 line)
 {
 	/* User can add his own implementation to report the file name and line number,
 	   ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+    // 引入printf会导致链接时程序空间变大，链接报错
 	// printf("Wrong parameters value: file %s on line %ld\r\n", file, line);
 	/* Infinite loop */
 	while (1)
