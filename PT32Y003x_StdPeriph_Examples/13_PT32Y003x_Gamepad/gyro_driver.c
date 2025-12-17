@@ -1,6 +1,14 @@
 // gyro_driver.c
 #include "gyro_driver.h"
 #include "delay.h"
+
+// ===== 陀螺仪角度输出（最小可用版：整数近似）=====
+
+static int16_t s_roll_deg = 0;   // -90~+90
+static int16_t s_pitch_deg = 0;  // -90~+90
+static int16_t s_yaw_deg = 0;    // -90~+90（演示用积分）
+static uint16_t s_mpu_fail_cnt = 0;
+
 // 返回1=等到了，0=超时
 static uint8_t i2c_wait_flag_set(uint32_t flag, uint32_t timeout_ms)
 {
@@ -32,9 +40,10 @@ static void i2c_recover(void)
 {
     I2C_Cmd(I2C0, DISABLE);
     // 可选：延时几百us
+    // delay_us(200);
     I2C_Cmd(I2C0, ENABLE);
 }
-void I2C_EE_Read(uint8_t* pBuffer,uint16_t ReadAddr, uint16_t DeviceAddr, uint16_t data_size)
+uint8_t I2C_EE_Read(uint8_t* pBuffer,uint16_t ReadAddr, uint16_t DeviceAddr, uint16_t data_size)
 {
 	int i;
 /******************等待从机ready***************/		
@@ -68,9 +77,11 @@ void I2C_EE_Read(uint8_t* pBuffer,uint16_t ReadAddr, uint16_t DeviceAddr, uint16
 	}
 	/******************发送停止位***************/
 	I2C_GenerateEvent(I2C0,I2C_Event_Stop,ENABLE);
-    return;          // ★ 成功直接返回
-    fail:
+    return 1;          // ★ 成功直接返回
+fail:
+    I2C_GenerateEvent(I2C0, I2C_Event_Stop, ENABLE); // 关键：失败也发 STOP
     i2c_recover();
+    return 0;
 }
 void I2C_EE_Write(uint8_t* pBuffer, unsigned int WriteAddr,uint16_t DeviceAddr, uint16_t data_size)
 {
@@ -95,6 +106,7 @@ void I2C_EE_Write(uint8_t* pBuffer, unsigned int WriteAddr,uint16_t DeviceAddr, 
 	I2C_GenerateEvent(I2C0,I2C_Event_Stop,ENABLE);
     return;          // ★ 成功直接返回
     fail:
+    I2C_GenerateEvent(I2C0, I2C_Event_Stop, ENABLE);
     i2c_recover();
 }
 uint8_t MPU_ReadReg(uint8_t reg)
@@ -103,9 +115,10 @@ uint8_t MPU_ReadReg(uint8_t reg)
     I2C_EE_Read(&val, reg, MPU_ADDR, 1);
     return val;
 }
-void MPU_ReadRegs(uint8_t start_reg, uint8_t *buf, uint16_t len)
+// 读取连续的多个地址
+uint8_t MPU_ReadRegs(uint8_t start_reg, uint8_t *buf, uint16_t len)
 {
-    I2C_EE_Read(buf, start_reg, MPU_ADDR, len);
+    return I2C_EE_Read(buf, start_reg, MPU_ADDR, len);
 }
 void MPU_WriteReg(uint8_t reg, uint8_t val)
 {
@@ -117,11 +130,6 @@ int16_t be16_to_i16(uint8_t hi, uint8_t lo)
 }
 void gyro_first_read(void)
 {
-    // 打印提示信息
-	// UART_SendData(UART1, 'g');
-	// while (!UART_GetFlagStatus(UART1, UART_FLAG_TXE)){};
-	// UART_SendData(UART1, ':');
-	// while (!UART_GetFlagStatus(UART1, UART_FLAG_TXE)){};
 	// 1) WHO_AM_I
     uint8_t who = MPU_ReadReg(REG_WHO_AM_I);
 	UART_SendData(UART1, who);
@@ -131,17 +139,7 @@ void gyro_first_read(void)
     MPU_WriteReg(REG_PWR_MGMT_1, 0x00);
 
 	delay_ms(10);// TODO: 短暂延时等待硬件准备就绪是否必要？
-
-    who = MPU_ReadReg(REG_WHO_AM_I);
-	UART_SendData(UART1, who);
-	while (!UART_GetFlagStatus(UART1, UART_FLAG_TXE)){};
 }
-
-// ===== 陀螺仪角度输出（最小可用版：整数近似）=====
-
-static int16_t s_roll_deg = 0;   // -90~+90
-static int16_t s_pitch_deg = 0;  // -90~+90
-static int16_t s_yaw_deg = 0;    // -90~+90（演示用积分）
 
 static uint32_t isqrt32(uint32_t x)
 {
@@ -218,11 +216,34 @@ static uint8_t map_angle_u8(int16_t deg)
     deg = clamp90(deg);
     return (uint8_t)(deg + 90); // -90->0, 0->90, +90->180
 }
+static void mpu_recover(void)
+{
+    // 1) 先让I2C尽量回到空闲
+    I2C_GenerateEvent(I2C0, I2C_Event_Stop, ENABLE);
+    i2c_recover();
 
+    // 2) 软复位MPU（PWR_MGMT_1 bit7 = DEVICE_RESET）
+    MPU_WriteReg(REG_PWR_MGMT_1, 0x80);
+    delay_ms(50);
+
+    // 3) 唤醒（SLEEP=0）
+    MPU_WriteReg(REG_PWR_MGMT_1, 0x00);
+    delay_ms(10);
+
+    // 4) 可选：清零yaw积分，避免恢复后突然跳变
+    s_yaw_deg = 0;
+}
 void gyro_update_20ms(void)
 {
     uint8_t buf[14];
-    MPU_ReadRegs(REG_ACCEL_XOUT_H, buf, 14);   // 读ACC/T/GYRO（你已有此函数）:contentReference[oaicite:4]{index=4}
+    if (!MPU_ReadRegs(REG_ACCEL_XOUT_H, buf, 14)) {
+        if (++s_mpu_fail_cnt >= 20) {     // 连续失败20次≈400ms(20ms周期)
+            s_mpu_fail_cnt = 0;
+            mpu_recover();
+        }
+        return;
+    }
+    s_mpu_fail_cnt = 0; // 成功一次就清零
 
     int16_t ax = be16_to_i16(buf[0],  buf[1]);
     int16_t ay = be16_to_i16(buf[2],  buf[3]);
