@@ -8,10 +8,15 @@ static int16_t s_roll_deg = 0;   // -90~+90
 static int16_t s_pitch_deg = 0;  // -90~+90
 static int16_t s_yaw_deg = 0;    // -90~+90（演示用积分）
 
-static int32_t s_yaw_mdeg = 0;
+static int32_t s_yaw_mdeg = 0; // 用于积分解决Z轴测量范围不对、有零漂的问题
 static int32_t s_gz_bias = 0;
 static uint32_t s_last_yaw_ms = 0;
 static uint32_t s_a2_ref = 0;
+
+// static const int16_t AZ_DEADZONE = 600;     // |az| 很小 => roll 观测退化
+// static const int32_t DENOM_DEADZONE = 800;  // sqrt(ay^2+az^2) 很小 => pitch 观测退化
+static const int16_t AZ_DEADZONE = 1000;     // |az| 很小 => roll 观测退化
+static const int32_t DENOM_DEADZONE = 1200;  // sqrt(ay^2+az^2) 很小 => pitch 观测退化
 
 static uint16_t s_mpu_fail_cnt = 0;
 
@@ -304,12 +309,38 @@ void gyro_update_20ms(void)
     int16_t gz = be16_to_i16(buf[12], buf[13]);
 
     // roll = atan2(ay, az)
-    s_roll_deg = clamp90(atan2_deg_approx((int32_t)ay, (int32_t)az));
-
+    // s_roll_deg = clamp90(atan2_deg_approx((int32_t)ay, (int32_t)az));
+    // ===== roll：退化区保护（pitch接近±90时 az≈0，atan2会把噪声放大导致roll乱跳）=====
+    // 修正
+    // if (iabs32((int32_t)az) >= AZ_DEADZONE) {
+    //     s_roll_deg = clamp90(atan2_deg_approx((int32_t)ay, (int32_t)az));
+    // } else {
+    //     // 观测退化：保持上一帧 roll（止血）
+    // }
+    // 三段式修正
+    {
+        int32_t abs_az = iabs32((int32_t)az);
+        int16_t roll_obs = clamp90(atan2_deg_approx((int32_t)ay, (int32_t)az));
+        
+        if (abs_az >= AZ_DEADZONE) {
+            // 正常区：直接更新
+            s_roll_deg = roll_obs;
+        } else if (abs_az >= (AZ_DEADZONE / 2)) {
+            // 临界区：轻量IIR（1/4新值 + 3/4旧值），让它“缓慢跟随”
+            s_roll_deg = (int16_t)((s_roll_deg * 3 + roll_obs) / 4);
+        } else {
+             // 退化区：冻结
+        }
+    }
     // pitch = atan2(-ax, sqrt(ay^2 + az^2))
     uint32_t denom = isqrt32((uint32_t)((int32_t)ay * ay + (int32_t)az * az));
-    s_pitch_deg = clamp90(atan2_deg_approx((int32_t)(-ax), (int32_t)denom));
-
+    // s_pitch_deg = clamp90(atan2_deg_approx((int32_t)(-ax), (int32_t)denom));
+    // ===== pitch：同理保护 denom 很小时的数值爆炸 =====
+    if (denom >= DENOM_DEADZONE) {
+        s_pitch_deg = clamp90(atan2_deg_approx((int32_t)(-ax), (int32_t)denom));
+    } else {
+        // 观测退化：保持上一帧 pitch
+    }
     // yaw：用gz积分（演示版），默认±250dps约131 LSB/dps；dt=20ms
     // delta_deg ≈ gz/131 * 0.02
     // int32_t delta = ((int32_t)gz * 20) / (131 * 1000); // 很粗的整数积分
