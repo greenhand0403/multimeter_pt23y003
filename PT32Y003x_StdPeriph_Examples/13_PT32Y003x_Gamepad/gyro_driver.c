@@ -7,6 +7,12 @@
 static int16_t s_roll_deg = 0;   // -90~+90
 static int16_t s_pitch_deg = 0;  // -90~+90
 static int16_t s_yaw_deg = 0;    // -90~+90（演示用积分）
+
+static int32_t s_yaw_mdeg = 0;
+static int32_t s_gz_bias = 0;
+static uint32_t s_last_yaw_ms = 0;
+static uint32_t s_a2_ref = 0;
+
 static uint16_t s_mpu_fail_cnt = 0;
 
 // 返回1=等到了，0=超时
@@ -128,6 +134,23 @@ int16_t be16_to_i16(uint8_t hi, uint8_t lo)
 {
     return (int16_t)((hi << 8) | lo);
 }
+static inline int32_t iabs32(int32_t x) { return (x < 0) ? -x : x; }
+
+// 只读取gz（通过连续读0x3B的14字节，保持与你现有读取方式一致）
+static uint8_t mpu_read_gz(int16_t* out_gz, int16_t* out_ax, int16_t* out_ay, int16_t* out_az)
+{
+    uint8_t buf[14];
+    if (!MPU_ReadRegs(REG_ACCEL_XOUT_H, buf, 14)) return 0;
+    int16_t ax = be16_to_i16(buf[0],  buf[1]);
+    int16_t ay = be16_to_i16(buf[2],  buf[3]);
+    int16_t az = be16_to_i16(buf[4],  buf[5]);
+    int16_t gz = be16_to_i16(buf[12], buf[13]);
+    if (out_gz) *out_gz = gz;
+    if (out_ax) *out_ax = ax;
+    if (out_ay) *out_ay = ay;
+    if (out_az) *out_az = az;
+    return 1;
+}
 void gyro_first_read(void)
 {
 	// 1) WHO_AM_I
@@ -139,6 +162,36 @@ void gyro_first_read(void)
     MPU_WriteReg(REG_PWR_MGMT_1, 0x00);
 
 	delay_ms(10);// TODO: 短暂延时等待硬件准备就绪是否必要？
+
+    // ===== 启动静止校准：估计gz零偏，显著减少yaw漂移 =====
+    // 要求：上电后这段时间尽量保持静止（~0.5s）
+    {
+        const uint16_t N = 60;        // 采样次数（可调：40~100）
+        const uint16_t DLY = 5;       // 每次间隔ms（可调：2~10）
+        int64_t sum_gz = 0;
+        uint64_t sum_a2 = 0;
+        uint16_t ok = 0;
+        for (uint16_t i = 0; i < N; i++) {
+            int16_t gz, ax, ay, az;
+            if (mpu_read_gz(&gz, &ax, &ay, &az)) {
+                sum_gz += gz;
+                sum_a2 += (uint32_t)((int32_t)ax * ax) +
+                        (uint32_t)((int32_t)ay * ay) +
+                        (uint32_t)((int32_t)az * az);
+                ok++;
+            }
+            delay_ms(DLY);
+        }
+        if (ok > 0) {
+            s_gz_bias = (int32_t)(sum_gz / ok);
+            s_a2_ref  = (uint32_t)(sum_a2 / ok);
+        } else {
+            s_gz_bias = 0;
+            s_a2_ref  = 0;
+        }
+        s_yaw_mdeg = 0;
+        s_last_yaw_ms = s_ms_ticks;   // 用真实时间戳积分
+    }
 }
 
 static uint32_t isqrt32(uint32_t x)
@@ -259,13 +312,43 @@ void gyro_update_20ms(void)
 
     // yaw：用gz积分（演示版），默认±250dps约131 LSB/dps；dt=20ms
     // delta_deg ≈ gz/131 * 0.02
-    int32_t delta = ((int32_t)gz * 20) / (131 * 1000); // 很粗的整数积分
-    s_yaw_deg = clamp90((int16_t)(s_yaw_deg + delta));
+    // int32_t delta = ((int32_t)gz * 20) / (131 * 1000); // 很粗的整数积分
+    // s_yaw_deg = clamp90((int16_t)(s_yaw_deg + delta));
+
+    // ===== yaw：用“真实dt(ms)”积分 + gz零偏校准，内部不clamp =====
+    uint32_t now = s_ms_ticks;
+    uint32_t dt = (s_last_yaw_ms == 0) ? 20 : (now - s_last_yaw_ms);
+    s_last_yaw_ms = now;
+    if (dt > 100) dt = 100; // 防止长时间卡住导致一次积分过大（保护）
+    int32_t gz_corr = (int32_t)gz - s_gz_bias;   // 去零偏后的gz
+    // mdeg增量：d(deg) = (gz/131)*(dt/1000) => d(mdeg)= gz*dt/131
+    // 这里用毫度积分，分辨率比你原先“整数度”高很多，抖动/跳变会明显变小
+    s_yaw_mdeg += (gz_corr * (int32_t)dt) / 131;
+    // ===== 在线微调 bias（静止时慢慢贴合）=====
+    // 判定“静止”的非常轻量条件：
+    // 1) 去偏后的|gz|很小
+    // 2) 加速度模长平方与启动参考相近（粗略判断没在大幅运动/震动）
+    if (s_a2_ref != 0) {
+        uint32_t a2 = (uint32_t)((int32_t)ax * ax) +
+                    (uint32_t)((int32_t)ay * ay) +
+                    (uint32_t)((int32_t)az * az);
+        uint32_t diff = (a2 > s_a2_ref) ? (a2 - s_a2_ref) : (s_a2_ref - a2);
+        // 阈值可调：下面两个阈值越严格，越不容易“动的时候被当作静止”
+        if (iabs32(gz_corr) < 50 && diff < (s_a2_ref / 20)) { // ~5%窗口
+            // IIR：bias = 0.999*bias + 0.001*gz
+            s_gz_bias = (s_gz_bias * 999 + (int32_t)gz) / 1000;
+        }
+    }
 }
 
 void gyro_get_mapped_angles(uint8_t* r, uint8_t* p, uint8_t* y)
 {
     if (r) *r = map_angle_u8(s_roll_deg);
     if (p) *p = map_angle_u8(s_pitch_deg);
-    if (y) *y = map_angle_u8(s_yaw_deg);
+    // if (y) *y = map_angle_u8(s_yaw_deg);
+    if (y) {
+        int16_t yaw_deg = (int16_t)(s_yaw_mdeg / 1000);  // 毫度->度（截断）
+        yaw_deg = clamp90(yaw_deg);                      // 按你协议只输出-90~+90
+        *y = map_angle_u8(yaw_deg);                      // 映射到0~180
+    }
 }
