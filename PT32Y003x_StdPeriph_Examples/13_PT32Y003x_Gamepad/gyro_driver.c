@@ -1,7 +1,7 @@
 // gyro_driver.c
 #include "gyro_driver.h"
 #include "delay.h"
-
+#include <math.h>
 // ===== 陀螺仪角度输出（最小可用版：整数近似）=====
 
 static int16_t s_roll_deg = 0;   // -90~+90
@@ -329,31 +329,26 @@ void gyro_update_20ms(void)
     int32_t gz_corr = (int32_t)gz - s_gz_bias;   // 去零偏后的gz
     int32_t gx_corr = (int32_t)gx - s_gx_bias;
     int32_t gy_corr = (int32_t)gy - s_gy_bias;
-    // FS_SEL=0(±250dps)时：131 LSB/(deg/s)
-    // d(mdeg) = gx*dt/131
-    s_roll_mdeg  += (gx_corr * (int32_t)dt) / 131;
-    s_pitch_mdeg += (gy_corr * (int32_t)dt) / 131;
+// -------------------- roll/pitch：纯加速度（对称抗退化） --------------------
+static int32_t ax_f = 0, ay_f = 0, az_f = 0;   // 一阶低通（可选但推荐）
 
-    // ===== 2) 用 accel 计算观测角（用于慢校正漂移）=====
-    int16_t roll_acc  = atan2_deg_approx((int32_t)ay, (int32_t)az);
-    int32_t denom = (int32_t)isqrt32((uint32_t)((int32_t)ay * ay + (int32_t)az * az));
-    int16_t pitch_acc = atan2_deg_approx((int32_t)(-ax), (int32_t)denom);
-    
-    // ===== 3) 退化区：弱化/禁用 accel 校正，避免 az≈0 时把 roll 拉飞 =====
-    // roll：az太小 => accel roll 不可靠
-    if (((az < 0) ? -az : az) >= AZ_DEADZONE) {
-        int32_t roll_acc_mdeg = (int32_t)roll_acc * 1000;
-        s_roll_mdeg = (s_roll_mdeg * CF_GYRO_W + roll_acc_mdeg * CF_ACC_W) / (CF_GYRO_W + CF_ACC_W);
-    }
-    // pitch：denom 太小 => accel pitch 不可靠
-    if (denom >= DENOM_DEADZONE) {
-        int32_t pitch_acc_mdeg = (int32_t)pitch_acc * 1000;
-        s_pitch_mdeg = (s_pitch_mdeg * CF_GYRO_W + pitch_acc_mdeg * CF_ACC_W) / (CF_GYRO_W + CF_ACC_W);
-    }
-    
-    // ===== 4) 输出角（仍限制到-90~+90，符合你的协议映射）=====
-    s_roll_deg  = clamp90((int16_t)(s_roll_mdeg / 1000));
-    s_pitch_deg = clamp90((int16_t)(s_pitch_mdeg / 1000));
+// 1) 简单低通，减少抖动（3/4旧 + 1/4新）
+ax_f = (ax_f * 3 + ax) / 4;
+ay_f = (ay_f * 3 + ay) / 4;
+az_f = (az_f * 3 + az) / 4;
+
+// 2) 对称公式（核心）
+// roll  = atan2(ay, sqrt(ax^2 + az^2))
+uint32_t denom_r_u = isqrt32((uint32_t)((int32_t)ax_f * ax_f + (int32_t)az_f * az_f));
+int32_t denom_r = (int32_t)denom_r_u;
+if (denom_r < 1) denom_r = 1;
+s_roll_deg = clamp90(atan2_deg_approx((int32_t)ay_f, denom_r));
+
+// pitch = atan2(-ax, sqrt(ay^2 + az^2))
+uint32_t denom_p_u = isqrt32((uint32_t)((int32_t)ay_f * ay_f + (int32_t)az_f * az_f));
+int32_t denom_p = (int32_t)denom_p_u;
+if (denom_p < 1) denom_p = 1;
+s_pitch_deg = clamp90(atan2_deg_approx((int32_t)(-ax_f), denom_p));
 
     // mdeg增量：d(deg) = (gz/131)*(dt/1000) => d(mdeg)= gz*dt/131
     // 这里用毫度积分，分辨率比你原先“整数度”高很多，抖动/跳变会明显变小
@@ -374,11 +369,30 @@ void gyro_update_20ms(void)
         }
     }
 }
+static uint8_t remap_u8(uint8_t u)
+{
+    // 你实测范围：min=0x04, max=0xAE
+    const int32_t in_min = 0x06;   // 6
+    const int32_t in_max = 0xAC;   // 172
+    const int32_t out_min = 0;
+    const int32_t out_max = 0xB4;  // 180
+
+    int32_t x = (int32_t)u;
+    if (x <= in_min) return (uint8_t)out_min;
+    if (x >= in_max) return (uint8_t)out_max;
+
+    // 线性拉伸：y = (x-in_min)*(out_range)/(in_range)
+    int32_t y = (x - in_min) * (out_max - out_min) / (in_max - in_min);
+    if (y < 0) y = 0;
+    if (y > 180) y = 180;
+    return (uint8_t)y;
+}
 
 void gyro_get_mapped_angles(uint8_t* r, uint8_t* p, uint8_t* y)
 {
-    if (r) *r = map_angle_u8(s_roll_deg);
-    if (p) *p = map_angle_u8(s_pitch_deg);
+    // 实测发现到不了极限值±90°，所以做一个映射
+    if (r) *r = remap_u8(map_angle_u8(s_roll_deg));
+    if (p) *p = remap_u8(map_angle_u8(s_pitch_deg));
     // if (y) *y = map_angle_u8(s_yaw_deg);
     if (y) {
         int16_t yaw_deg = (int16_t)(s_yaw_mdeg / 1000);  // 毫度->度（截断）
