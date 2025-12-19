@@ -7,6 +7,9 @@
 #include "gyro_driver.h"
 // #include "pwm_driver.h"
 // #include "servo_driver.h"
+
+#define CRC_ENABLE 0
+
 // 蓝牙名称是否合法 1 则合法
 uint8_t BLE_NAME_LEGAL = 0;
 extern uint8_t Legal_MAC[2];
@@ -197,8 +200,13 @@ void enter_sleep_mode(void)
 volatile uint8_t debug_packet_ready = 0;
 uint8_t debug_packet[10];
 uint8_t count = 0;
-
-
+#if CRC_ENABLE
+// CRC 校验
+static uint16_t crc_sum_cmd_to_seq(uint8_t cmd, uint8_t d0, uint8_t d1, uint8_t seq)
+{
+    return (uint16_t)cmd + (uint16_t)d0 + (uint16_t)d1 + (uint16_t)seq;
+}
+#endif
 void ParseBinaryPacket(void)
 {
 
@@ -209,26 +217,7 @@ void ParseBinaryPacket(void)
     {
         uint8_t b = rx_ring[rx_tail];
         rx_tail = (rx_tail + 1) % LINE_BUF_SIZE;
-        // 硬解析数组
-        // line_buf[line_len] = (char)b;
-        // if (line_buf[line_len] == 0xff && line_buf[line_len-1] == 0xff)
-        // {
-        //     for (int j = 0; j < 10; j++)
-        //     {
-        //         UART_SendData(UART1, line_buf[j+10*count]);
-        //         while (UART_GetFlagStatus(UART1, UART_FLAG_TXE) == RESET);
-        //     }
 
-        //     count = (count + 1) % (LINE_BUF_SIZE / 10);
-        // }
-
-        // // 限制行长度，防止越界
-        // if (line_len < LINE_BUF_SIZE - 1) {
-        //     line_len++;
-        // } else {
-        //     // 行太长，丢弃并重置
-        //     line_len = 0;
-        // }
         // 二进制接收状态机
         switch (state)
         {
@@ -239,10 +228,6 @@ void ParseBinaryPacket(void)
                 index = 1;
                 state = 1;
             }
-            // else
-            // {
-            //     continue;
-            // }
             break;
 
         case 1: // 等 AA
@@ -252,17 +237,6 @@ void ParseBinaryPacket(void)
                 index = 2;
                 state = 2;
             }
-            // else
-            // {
-            //     state = 0; // 回到初始状态
-            //     // 如果当前字节恰好是 55，则让状态机重新从 state 1 进入
-            //     if (b == PROTOCOL_HEADER_H)
-            //     {
-            //         packet[0] = b;
-            //         index = 1;
-            //         state = 1;
-            //     }
-            // }
             break;
 
         case 2:
@@ -273,22 +247,38 @@ void ParseBinaryPacket(void)
                 memcpy(debug_packet, packet, 10);
                 debug_packet_ready = 1;
 
-                // 根据协议解析
-                uint8_t cmd  = packet[2];
-                uint8_t data = packet[4];
+                // ====== 取字段（按文档：55 AA | cmd | data0 data1 | seq | crcH crcL | FF FF）======
+                uint8_t cmd = packet[2];
+                uint8_t d0  = packet[3];
+                uint8_t d1  = packet[4];
+                uint8_t seq = packet[5];
 
-                // 示例：PWM 指令
-                if (cmd == 0x01)
-                {
-                    pwm_set_duty(data);
+                uint16_t crc_rx = ((uint16_t)packet[6] << 8) | (uint16_t)packet[7];
+#if CRC_ENABLE
+                uint16_t crc_cal = crc_sum_cmd_to_seq(cmd, d0, d1, seq);
+                // ====== 尾码校验（更稳健，防止错位）======
+                if (packet[8] == 0xFF && packet[9] == 0xFF) {
+                    // ====== CRC 校验（你协议核心）======
+                    if (crc_rx == crc_cal) {
+#endif
+                        // ====== 执行命令 ======
+                        if (cmd == 0x01) {
+                            // PWM：d0=端口, d1=占空比(0~255)
+                            // 文档示例：PB5=0x14 输出PWM :contentReference[oaicite:4]{index=4}
+                            if (d0 == 0x14) {
+                                pwm_set_duty((uint16_t)d1);
+                            }
+                        }
+                        else if (cmd == 0x02) {
+                            // 舵机：d0保留=0x00, d1=角度(0~180) :contentReference[oaicite:5]{index=5}
+                            if (d1 <= 180) {
+                                servo_set_angle(d1);
+                            }
+                        }
+#if CRC_ENABLE
+                    }
                 }
-                // 示例：舵机指令
-                else if (cmd == 0x02)
-                {
-                    if (data > 180) data = 180;
-                    servo_set_angle(data);
-                }
-
+#endif
                 // 重置
                 state = 0;
                 index = 0;
@@ -296,7 +286,6 @@ void ParseBinaryPacket(void)
             break;
         }
     }
-
 }
 
 void PollAndProcessUARTLines(void)
