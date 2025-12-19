@@ -265,6 +265,8 @@ void send_key_status_packet(void)
 }
 void bluetooth_send_first_connect_packet(void)
 {
+    g_seq_num = 0;
+
     protocol_packet_t packet;
     packet.header_h = PROTOCOL_HEADER_H;
     packet.header_l = PROTOCOL_HEADER_L;

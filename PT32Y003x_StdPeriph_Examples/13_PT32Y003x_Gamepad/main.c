@@ -10,7 +10,6 @@
 // 蓝牙名称是否合法 1 则合法
 uint8_t BLE_NAME_LEGAL = 0;
 extern uint8_t Legal_MAC[2];
-
 // 记录上次活动时间，用于判断是否120秒未连接超时
 extern uint32_t last_activity_time;
 extern volatile uint32_t g_last_packet_time;  // 上次发送包的时间戳，用于每20ms发送陀螺仪数据的 逻辑
