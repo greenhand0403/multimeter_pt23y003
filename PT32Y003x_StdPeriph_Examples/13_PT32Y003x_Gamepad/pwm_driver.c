@@ -5,6 +5,10 @@ uint16_t pb5_high_tick;
 
 void pwm_init(void)
 {
+	I2C_Cmd(I2C0, DISABLE);
+	// 关键：从陀螺仪(I2C)模式切回来时，PB5 可能仍是 I2C SDA，需要先解除复用
+    GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_5, AFIO_AF_0, DISABLE);
+
     // 用TIM2基本定时器来做PWM输出，需要配置GPIO PB5输出
 	GPIO_InitTypeDef GPIO_InitStructure;				//定义一个GPIO_InitTypeDef类型的结构体
 	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_5;			//选择要控制的GPIO引脚
