@@ -13,12 +13,24 @@ static int32_t s_gz_bias = 0;
 static uint32_t s_last_yaw_ms = 0;
 static uint32_t s_a2_ref = 0;
 
-// static const int16_t AZ_DEADZONE = 600;     // |az| 很小 => roll 观测退化
-// static const int32_t DENOM_DEADZONE = 800;  // sqrt(ay^2+az^2) 很小 => pitch 观测退化
-static const int16_t AZ_DEADZONE = 1000;     // |az| 很小 => roll 观测退化
-static const int32_t DENOM_DEADZONE = 1200;  // sqrt(ay^2+az^2) 很小 => pitch 观测退化
-
 static uint16_t s_mpu_fail_cnt = 0;
+
+// ===== roll/pitch：用陀螺积分维持连续性（单位：毫度）=====
+static int32_t s_roll_mdeg = 0;
+static int32_t s_pitch_mdeg = 0;
+static uint32_t s_last_rp_ms = 0;
+
+// 陀螺零偏（原始LSB）
+static int32_t s_gx_bias = 0;
+static int32_t s_gy_bias = 0;
+
+// 退化区阈值：在 pitch 接近 ±90° 时，az≈0，roll 的 accel 观测会退化
+static const int16_t AZ_DEADZONE = 1000;      // |az| < 该值：认为roll accel观测不可靠
+static const int32_t DENOM_DEADZONE = 1500;   // sqrt(ay^2+az^2) < 该值：pitch accel观测不可靠
+
+// 互补滤波系数：98% 信任陀螺，2% 用加速度纠偏（可调：97/3 或 99/1）
+static const int32_t CF_GYRO_W = 98;
+static const int32_t CF_ACC_W  = 2;
 
 // 返回1=等到了，0=超时
 static uint8_t i2c_wait_flag_set(uint32_t flag, uint32_t timeout_ms)
@@ -168,34 +180,33 @@ void gyro_first_read(void)
 
 	delay_ms(10);// TODO: 短暂延时等待硬件准备就绪是否必要？
 
-    // ===== 启动静止校准：估计gz零偏，显著减少yaw漂移 =====
-    // 要求：上电后这段时间尽量保持静止（~0.5s）
+    // ===== 启动静止校准：估计 gx/gy 零偏，减少积分漂移 =====
     {
-        const uint16_t N = 60;        // 采样次数（可调：40~100）
-        const uint16_t DLY = 5;       // 每次间隔ms（可调：2~10）
-        int64_t sum_gz = 0;
-        uint64_t sum_a2 = 0;
+        const uint16_t N = 60;
+        const uint16_t DLY = 5;
+        int64_t sum_gx = 0, sum_gy = 0;
         uint16_t ok = 0;
         for (uint16_t i = 0; i < N; i++) {
-            int16_t gz, ax, ay, az;
-            if (mpu_read_gz(&gz, &ax, &ay, &az)) {
-                sum_gz += gz;
-                sum_a2 += (uint32_t)((int32_t)ax * ax) +
-                        (uint32_t)((int32_t)ay * ay) +
-                        (uint32_t)((int32_t)az * az);
+            uint8_t b[14];
+            if (MPU_ReadRegs(REG_ACCEL_XOUT_H, b, 14)) {
+                int16_t gx = be16_to_i16(b[8],  b[9]);
+                int16_t gy = be16_to_i16(b[10], b[11]);
+                sum_gx += gx;
+                sum_gy += gy;
                 ok++;
             }
             delay_ms(DLY);
         }
-        if (ok > 0) {
-            s_gz_bias = (int32_t)(sum_gz / ok);
-            s_a2_ref  = (uint32_t)(sum_a2 / ok);
+        if (ok) {
+            s_gx_bias = (int32_t)(sum_gx / ok);
+            s_gy_bias = (int32_t)(sum_gy / ok);
         } else {
-            s_gz_bias = 0;
-            s_a2_ref  = 0;
+            s_gx_bias = 0;
+            s_gy_bias = 0;
         }
-        s_yaw_mdeg = 0;
-        s_last_yaw_ms = s_ms_ticks;   // 用真实时间戳积分
+        s_roll_mdeg = 0;
+        s_pitch_mdeg = 0;
+        s_last_rp_ms = s_ms_ticks;
     }
 }
 
@@ -306,45 +317,9 @@ void gyro_update_20ms(void)
     int16_t ax = be16_to_i16(buf[0],  buf[1]);
     int16_t ay = be16_to_i16(buf[2],  buf[3]);
     int16_t az = be16_to_i16(buf[4],  buf[5]);
+    int16_t gx = be16_to_i16(buf[8],  buf[9]);
+    int16_t gy = be16_to_i16(buf[10], buf[11]);
     int16_t gz = be16_to_i16(buf[12], buf[13]);
-
-    // roll = atan2(ay, az)
-    // s_roll_deg = clamp90(atan2_deg_approx((int32_t)ay, (int32_t)az));
-    // ===== roll：退化区保护（pitch接近±90时 az≈0，atan2会把噪声放大导致roll乱跳）=====
-    // 修正
-    // if (iabs32((int32_t)az) >= AZ_DEADZONE) {
-    //     s_roll_deg = clamp90(atan2_deg_approx((int32_t)ay, (int32_t)az));
-    // } else {
-    //     // 观测退化：保持上一帧 roll（止血）
-    // }
-    // 三段式修正
-    {
-        int32_t abs_az = iabs32((int32_t)az);
-        int16_t roll_obs = clamp90(atan2_deg_approx((int32_t)ay, (int32_t)az));
-        
-        if (abs_az >= AZ_DEADZONE) {
-            // 正常区：直接更新
-            s_roll_deg = roll_obs;
-        } else if (abs_az >= (AZ_DEADZONE / 2)) {
-            // 临界区：轻量IIR（1/4新值 + 3/4旧值），让它“缓慢跟随”
-            s_roll_deg = (int16_t)((s_roll_deg * 3 + roll_obs) / 4);
-        } else {
-             // 退化区：冻结
-        }
-    }
-    // pitch = atan2(-ax, sqrt(ay^2 + az^2))
-    uint32_t denom = isqrt32((uint32_t)((int32_t)ay * ay + (int32_t)az * az));
-    // s_pitch_deg = clamp90(atan2_deg_approx((int32_t)(-ax), (int32_t)denom));
-    // ===== pitch：同理保护 denom 很小时的数值爆炸 =====
-    if (denom >= DENOM_DEADZONE) {
-        s_pitch_deg = clamp90(atan2_deg_approx((int32_t)(-ax), (int32_t)denom));
-    } else {
-        // 观测退化：保持上一帧 pitch
-    }
-    // yaw：用gz积分（演示版），默认±250dps约131 LSB/dps；dt=20ms
-    // delta_deg ≈ gz/131 * 0.02
-    // int32_t delta = ((int32_t)gz * 20) / (131 * 1000); // 很粗的整数积分
-    // s_yaw_deg = clamp90((int16_t)(s_yaw_deg + delta));
 
     // ===== yaw：用“真实dt(ms)”积分 + gz零偏校准，内部不clamp =====
     uint32_t now = s_ms_ticks;
@@ -352,6 +327,34 @@ void gyro_update_20ms(void)
     s_last_yaw_ms = now;
     if (dt > 100) dt = 100; // 防止长时间卡住导致一次积分过大（保护）
     int32_t gz_corr = (int32_t)gz - s_gz_bias;   // 去零偏后的gz
+    int32_t gx_corr = (int32_t)gx - s_gx_bias;
+    int32_t gy_corr = (int32_t)gy - s_gy_bias;
+    // FS_SEL=0(±250dps)时：131 LSB/(deg/s)
+    // d(mdeg) = gx*dt/131
+    s_roll_mdeg  += (gx_corr * (int32_t)dt) / 131;
+    s_pitch_mdeg += (gy_corr * (int32_t)dt) / 131;
+
+    // ===== 2) 用 accel 计算观测角（用于慢校正漂移）=====
+    int16_t roll_acc  = atan2_deg_approx((int32_t)ay, (int32_t)az);
+    int32_t denom = (int32_t)isqrt32((uint32_t)((int32_t)ay * ay + (int32_t)az * az));
+    int16_t pitch_acc = atan2_deg_approx((int32_t)(-ax), (int32_t)denom);
+    
+    // ===== 3) 退化区：弱化/禁用 accel 校正，避免 az≈0 时把 roll 拉飞 =====
+    // roll：az太小 => accel roll 不可靠
+    if (((az < 0) ? -az : az) >= AZ_DEADZONE) {
+        int32_t roll_acc_mdeg = (int32_t)roll_acc * 1000;
+        s_roll_mdeg = (s_roll_mdeg * CF_GYRO_W + roll_acc_mdeg * CF_ACC_W) / (CF_GYRO_W + CF_ACC_W);
+    }
+    // pitch：denom 太小 => accel pitch 不可靠
+    if (denom >= DENOM_DEADZONE) {
+        int32_t pitch_acc_mdeg = (int32_t)pitch_acc * 1000;
+        s_pitch_mdeg = (s_pitch_mdeg * CF_GYRO_W + pitch_acc_mdeg * CF_ACC_W) / (CF_GYRO_W + CF_ACC_W);
+    }
+    
+    // ===== 4) 输出角（仍限制到-90~+90，符合你的协议映射）=====
+    s_roll_deg  = clamp90((int16_t)(s_roll_mdeg / 1000));
+    s_pitch_deg = clamp90((int16_t)(s_pitch_mdeg / 1000));
+
     // mdeg增量：d(deg) = (gz/131)*(dt/1000) => d(mdeg)= gz*dt/131
     // 这里用毫度积分，分辨率比你原先“整数度”高很多，抖动/跳变会明显变小
     s_yaw_mdeg += (gz_corr * (int32_t)dt) / 131;
