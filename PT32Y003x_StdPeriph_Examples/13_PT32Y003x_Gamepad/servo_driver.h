@@ -4,6 +4,8 @@
 
 #include "system_config.h"
 
+uint32_t s_servo_apply_ms = 0;
+
 void servo_init(void);
 void servo_set_angle(uint8_t angle);
 

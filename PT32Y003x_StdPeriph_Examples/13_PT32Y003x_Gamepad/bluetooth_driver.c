@@ -1,5 +1,6 @@
 #include "bluetooth_driver.h"
 #include <string.h>
+#include "delay.h"
 // uint32_t last_send_time = 0;
 
 // extern volatile uint32_t s_ms_ticks;
@@ -80,6 +81,12 @@ void bluetooth_configure_name_start(void)
 {
     if (g_bt_config_state == BT_CFG_STATE_IDLE)
     {
+        // 2025/12/22 关闭SPP密码配对使能, 关闭SPP功能
+        bluetooth_send_at_command("AT+B100\r\n");
+        delay_ms(500);
+        bluetooth_send_at_command("AT+B500\r\n");
+        delay_ms(500);
+
         g_bt_config_state = BT_CFG_STATE_QUERY_NAME;
         // 开始查询当前名称
         bluetooth_send_at_command("AT+TM\r\n");
@@ -130,9 +137,9 @@ void ProcessBluetoothResponse(char* line)
             // 记录合法的 MAC 地址
             Legal_MAC[0] = (hex_to_val(name_suffix[0]) << 4) | hex_to_val(name_suffix[1]);
             Legal_MAC[1] = (hex_to_val(name_suffix[2]) << 4) | hex_to_val(name_suffix[3]);
-            UART_SendString(UART1, "Legal_MAC:");
-            UART_SendString(UART1, name_suffix);
-            UART_SendString(UART1, "\r\n");
+            // UART_SendString(UART1, "MAC:");
+            // UART_SendString(UART1, name_suffix);
+            // UART_SendString(UART1, "\r\n");
             if (strlen(name_suffix) >= 2) {
                 BLE_NAME_LEGAL = 1;
             }

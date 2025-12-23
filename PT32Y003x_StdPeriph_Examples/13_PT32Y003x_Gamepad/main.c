@@ -30,6 +30,8 @@ volatile uint16_t line_len = 0;
 // volatile uint16_t g_pwm_duty = 0;
 // volatile uint8_t g_servo_angle = 90; // 默认90度
 
+extern uint32_t s_servo_apply_ms;
+
 // 逐字节发送缓冲区
 // uint16_t rx_buffer[64] = {0};
 // uint8_t rx_index = 0;
@@ -264,15 +266,17 @@ void ParseBinaryPacket(void)
                         // ====== 执行命令 ======
                         if (cmd == 0x01) {
                             // PWM：d0=端口, d1=占空比(0~255)
-                            // 文档示例：PB5=0x14 输出PWM :contentReference[oaicite:4]{index=4}
+                            // 文档示例：PB5=0x14 输出PWM 
                             if (d0 == 0x14) {
                                 pwm_set_duty((uint16_t)d1);
                             }
                         }
                         else if (cmd == 0x02) {
-                            // 舵机：d0保留=0x00, d1=角度(0~180) :contentReference[oaicite:5]{index=5}
-                            if (d1 <= 180) {
+                            // 舵机：d0保留=0x00, d1=角度(0~180) 
+                            // 20ms 间隔，防止抖动
+                            if (d1 <= 180 && s_ms_ticks - s_servo_apply_ms >= 20) {
                                 servo_set_angle(d1);
+                                s_servo_apply_ms = s_ms_ticks;
                             }
                         }
 #if CRC_ENABLE
@@ -357,7 +361,7 @@ int main(void)
                     bluetooth_send_first_connect_packet();
                     // delay_ms(200);
                 }
-                UART_SendString(UART1, "FIRST CONNECT\r\n");
+                UART_SendString(UART1, "BT_CONNECTED\r\n");
                 g_work_mode_prev = WORK_MODE_IDLE;
                 
                 // 强烈建议清除掉旧的接收缓存。但是实际上后面证明是中断 优先级 的问题导致接收数据包 粘包
