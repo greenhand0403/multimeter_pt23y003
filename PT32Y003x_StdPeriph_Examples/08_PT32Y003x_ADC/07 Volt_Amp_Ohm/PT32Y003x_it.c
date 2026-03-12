@@ -67,6 +67,8 @@ void TIM1_Handler(void)
 * @param None
 * @retval None
 */
+
+extern volatile uint8_t g_short_press_event;
 extern const uint32_t PWR_DEBOUNCE_MS;
 extern const uint32_t PWR_LONGPRESS_MS;
 extern const uint32_t POSTWAKE_LONGPRESS_TIMEOUT;
@@ -86,62 +88,53 @@ void TIM2_Handler(void)
   {
     TIM_ClearFlag(TIM2, TIM_FLAG_ARF);
 
-    const uint16_t DEBOUNCE_TICKS = (uint16_t)(PWR_DEBOUNCE_MS / 10U);
+    const uint16_t DEBOUNCE_TICKS  = (uint16_t)(PWR_DEBOUNCE_MS / 10U);
     const uint16_t LONGPRESS_TICKS = (uint16_t)(PWR_LONGPRESS_MS / 10U);
 
-    uint8_t sample = GPIO_ReadDataBit(GPIOC, GPIO_Pin_5) ;
+    uint8_t sample = GPIO_ReadDataBit(GPIOC, GPIO_Pin_5);
 
-    if (sample == s_pwr_last_sample)
-    {
+    if (sample == s_pwr_last_sample) {
       if (s_pwr_stable_ticks < DEBOUNCE_TICKS)
         s_pwr_stable_ticks++;
-    } 
-    else
-    {
-        s_pwr_stable_ticks = 0;
-        s_pwr_last_sample = sample;
+    } else {
+      s_pwr_stable_ticks = 0;
+      s_pwr_last_sample = sample;
     }
 
     uint8_t pressed_stable = (s_pwr_last_sample == 0) && (s_pwr_stable_ticks >= DEBOUNCE_TICKS);
-    // 2) “等松手锁”逻辑
+
     if (s_lock_until_release) {
-        if (pressed_stable) {
-            // 还没松，继续忽略
-            return;
-        } else {
-            // 已经稳定松手 -> 解锁，并清零计数
-            s_lock_until_release = 0;
-            s_pwr_press_ticks = 0;
-            return;
-        }
-    }
-    // 3) 正常长按计时
-    if (pressed_stable) {
-      if (s_pwr_press_ticks < LONGPRESS_TICKS) s_pwr_press_ticks++;
-    } else {
+      if (pressed_stable) {
+        return;
+      } else {
+        s_lock_until_release = 0;
         s_pwr_press_ticks = 0;
+        return;
+      }
     }
 
-    
-    // 稳定按下
-    if (s_pwr_press_ticks >= LONGPRESS_TICKS)
-    {
-      s_pwr_press_ticks = 0;
-      if (g_run_mode == RUN_MODE_NORMALWORK)
-      {
-        poweroff_request = 1;
-        // 工作态长按进入休眠
-        // g_run_mode = RUN_MODE_DEEPSLEEP;
+    if (pressed_stable) {
+      if (s_pwr_press_ticks < LONGPRESS_TICKS)
+        s_pwr_press_ticks++;
+    } else {
+      // 松手瞬间判定短按
+      if (s_pwr_press_ticks >= DEBOUNCE_TICKS && s_pwr_press_ticks < LONGPRESS_TICKS) {
+        if (g_run_mode == RUN_MODE_NORMALWORK) {
+          g_short_press_event = 1;
+        }
       }
-      else// if (g_run_mode == RUN_MODE_DEEPSLEEP)
-      {
-          // 休眠态长按进入工作态
-          g_run_mode = RUN_MODE_NORMALWORK;
+      s_pwr_press_ticks = 0;
+    }
+
+    if (s_pwr_press_ticks >= LONGPRESS_TICKS) {
+      s_pwr_press_ticks = 0;
+      if (g_run_mode == RUN_MODE_NORMALWORK) {
+        poweroff_request = 1;
+      } else {
+        g_run_mode = RUN_MODE_NORMALWORK;
       }
       s_lock_until_release = 1;
     }
-
-    // ★ 若你有“每秒计数/状态统计”想挂 TIM2，也可在此处用静态分频计算 1s
   }
 }
 

@@ -15,7 +15,7 @@
 
 #pragma region 宏定义、全局变量和工具函数配置
 
-#define ENABLE_LOG 0
+#define ENABLE_LOG 1
 #if ENABLE_LOG
 char log_buffer[64];  // 用于打印日志 足够存储格式化字符串
   #define LOG_UART UART0
@@ -49,6 +49,8 @@ volatile idle_tracker_t g_idle = {0};
 #define CHANGE_THRESHOLD_ON   (0.10f)     // 进入安静判定阈值（10%）
 #define CHANGE_THRESHOLD_OFF  (0.11f)     // 退出安静的回差阈值（11%：轻微迟滞，抗抖）
 
+volatile uint8_t g_short_press_event = 0;
+
 // 长按按键初始化和按键唤醒
 // 可调参数
 const uint32_t PWR_DEBOUNCE_MS = 90U;
@@ -65,11 +67,11 @@ static bool hadSetMultiMeterMode = false;
 static bool hadSetMultimeterInit = false;
 // 运行模式：工作态 唤醒态 等待态
 typedef enum { RUN_MODE_NORMALWORK = 0, RUN_MODE_DEEPSLEEP = 1, RUN_MODE_WAKEUP = 2} run_mode_t;
-volatile uint8_t g_run_mode = RUN_MODE_NORMALWORK;   // 默认处于休眠模式
+volatile run_mode_t g_run_mode = RUN_MODE_NORMALWORK;   // 默认处于休眠模式
 
 // 万用表类型： 电压表 电流表 欧姆表
 typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } meter_mode_t;
-static meter_mode_t meter_mode = -1;
+static meter_mode_t meter_mode = METER_MODE_VOLT;
 
 // ===== 三合一新版引脚定义 =====
 #define ADC_CH_VOLT      ADC_Channel_1    // PA1
@@ -95,6 +97,7 @@ static meter_mode_t meter_mode = -1;
 // float V_REF = 0.991f;
 // 开机零点 电流表三号
 float V_REF = 0.989f;
+// 减去加法器一端的1V参考电压
 static inline float V_DV(float v_raw) { return v_raw - V_REF; }
 
 #define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f) // ADC 原始值转电压
@@ -350,7 +353,7 @@ void UART1_SendString(const char* str)
 #pragma region 参考电压输出配置
 /*******************************************************************************
 *Function:	ADC_Mode_Config
-*Description:	配置ADC
+*Description:	配置ADC扫描通道
 *Input:		无
 *Return:		无
 *Others:
@@ -376,10 +379,12 @@ void ADC_Driver(void)
 
 	ADC_Init(ADC, &ADC_InitStruct);
 
-    // ★ 扫描序列：序号0=PA1(ADC1)【测量端】，序号1=PC4(ADC7)【电池】
-    ADC_ScanChannelConfig(ADC, ADC_Channel_1, 0);
-    ADC_ScanChannelConfig(ADC, BATT_ADC_CHANNEL, 1);
-    ADC_ScanChannelNumberConfig(ADC, 2);
+    // ★ 扫描序列：序号0=PA1(ADC1)【电压表输入端】，序号1=PC4(ADC7)【电池】
+    ADC_ScanChannelConfig(ADC, ADC_CH_VOLT, 0); // PA1
+    ADC_ScanChannelConfig(ADC, ADC_CH_AMP,  1); // PD2
+    ADC_ScanChannelConfig(ADC, ADC_CH_OHM,  2); // PD3
+    ADC_ScanChannelConfig(ADC, ADC_CH_BATT, 3); // PC4
+    ADC_ScanChannelNumberConfig(ADC, 4);
     ADC_ScanCmd(ADC, ENABLE);
 
     // （可选）硬件平均
@@ -590,62 +595,77 @@ void deep_sleep(void)
 #pragma endregion
 
 #pragma region 万用表类型判断配置
-void MultiMeterIOOutputConfig(bool enable)
+static void OhmCtrl_GPIO_Init(void)
 {
-	if (!enable)
-	{
-		GPIO_InitTypeDef GPIO_InitStruct;
-		GPIO_InitStruct.GPIO_Mode=GPIO_Mode_In;
-		GPIO_InitStruct.GPIO_Pin=GPIO_Pin_2;
-		GPIO_InitStruct.GPIO_Pull=GPIO_Pull_Down;
-		GPIO_Init(GPIOA,&GPIO_InitStruct);
-		GPIO_DigitalRemapConfig(AFIOA, GPIO_Pin_2, AFIO_AF_None,DISABLE);
+    GPIO_InitTypeDef gi;
 
-		GPIO_InitTypeDef GPIO_InitStruct2;
-		GPIO_InitStruct2.GPIO_Mode=GPIO_Mode_In;
-		GPIO_InitStruct2.GPIO_Pin=GPIO_Pin_3;
-		GPIO_InitStruct2.GPIO_Pull=GPIO_Pull_Down;
-		GPIO_Init(GPIOA,&GPIO_InitStruct2);
-		GPIO_DigitalRemapConfig(AFIOA, GPIO_Pin_3, AFIO_AF_None,DISABLE);
-	}else
-    {
-        GPIO_InitTypeDef GPIO_InitStruct;
-		GPIO_InitStruct.GPIO_Mode=GPIO_Mode_OutPP;
-		GPIO_InitStruct.GPIO_Pull = GPIO_Pull_NoPull;	//无偏置
-		GPIO_InitStruct.GPIO_Pin=GPIO_Pin_2;
-		GPIO_Init(GPIOA, &GPIO_InitStruct);
-		GPIO_InitStruct.GPIO_Mode=GPIO_Mode_OutPP;
-		GPIO_InitStruct.GPIO_Pull = GPIO_Pull_NoPull;	//无偏置
-		GPIO_InitStruct.GPIO_Pin=GPIO_Pin_3;
-		GPIO_Init(GPIOA, &GPIO_InitStruct);
-    }
+    // PA2 Ω档
+    gi.GPIO_Mode = GPIO_Mode_OutPP;
+    gi.GPIO_Pull = GPIO_Pull_NoPull;
+    gi.GPIO_Pin  = GPIO_Pin_2;
+    GPIO_Init(GPIOA, &gi);
+
+    // PA3 kΩ档
+    gi.GPIO_Pin  = GPIO_Pin_3;
+    GPIO_Init(GPIOA, &gi);
+
+    // PB1 MΩ档
+    gi.GPIO_Pin  = GPIO_Pin_1;
+    GPIO_Init(GPIOB, &gi);
+
+    // PD4 黑表笔接地控制
+    gi.GPIO_Pin  = GPIO_Pin_4;
+    GPIO_Init(GPIOD, &gi);
+}
+
+static void Ohm_AllOff(void)
+{
+    // 高电平关断所有 MOS
+    GPIO_SetBits(GPIOA, GPIO_Pin_2);
+    GPIO_SetBits(GPIOA, GPIO_Pin_3);
+    GPIO_SetBits(GPIOB, GPIO_Pin_1);
+    GPIO_ResetBits(GPIOD, GPIO_Pin_4);   // 不接地
+}
+
+static void Ohm_EnableGround(bool en)
+{
+    if (en) GPIO_SetBits(GPIOD, GPIO_Pin_4);
+    else    GPIO_ResetBits(GPIOD, GPIO_Pin_4);
 }
 #pragma endregion
 
 #pragma region 万用表读取电压和输出配置
-// 扫描 ADC 并更新 g_adc_pa1_raw 和 g_adc_pc4_raw
+// 扫描 ADC 并更新 g_adc_pa1_raw, g_adc_pd2_raw, g_adc_pd3_raw, g_adc_pc4_raw
 static void ADC_ScanOnce(void)
 {
     ADC_StartOfConversion(ADC);
-    while(!ADC_GetFlagStatus(ADC, ADC_FLAG_EOS));           // 等“扫描完成”
+    while(!ADC_GetFlagStatus(ADC, ADC_FLAG_EOS));
 
-    // 注意：取“扫描序号”而不是“物理通道号”
     uint16_t d0 = (uint16_t)ADC_GetScanData(ADC, ADC_ScanChannel_0);
     uint16_t d1 = (uint16_t)ADC_GetScanData(ADC, ADC_ScanChannel_1);
+    uint16_t d2 = (uint16_t)ADC_GetScanData(ADC, ADC_ScanChannel_2);
+    uint16_t d3 = (uint16_t)ADC_GetScanData(ADC, ADC_ScanChannel_3);
 
-    g_adc_pa1_raw = (d0 >> 3);   // 左对齐 → 还原到 12bit 范围
-    g_adc_pc4_raw = (d1 >> 3);
+    g_adc_pa1_raw = (d0 >> 3);// 左对齐 → 还原到 12bit 范围
+    g_adc_pd2_raw = (d1 >> 3);
+    g_adc_pd3_raw = (d2 >> 3);
+    g_adc_pc4_raw = (d3 >> 3);
 }
 
-static float read_vin(int n)
+static float read_vin(meter_mode_t src, int n)
 {
     uint32_t acc = 0;
     for (int i = 0; i < n; ++i) {
         ADC_ScanOnce();
-        acc += g_adc_pa1_raw;
+        switch (src) {
+            case METER_MODE_VOLT: acc += g_adc_pa1_raw; break;
+            case METER_MODE_AMP:  acc += g_adc_pd2_raw; break;
+            case METER_MODE_OHM:  acc += g_adc_pd3_raw; break;
+            default: break;
+        }
     }
     uint16_t raw = (uint16_t)(acc / (uint32_t)n);
-    return ADC_TO_V(raw); // = raw * 2.0 / 4095（继续使用你的宏）
+    return ADC_TO_V(raw);
 }
 
 // MΩ 档对 Rs 的微调（按你此前经验：低/中/高阻做轻微补偿，可选）
@@ -665,19 +685,21 @@ static inline float compute_rx(float vin, float Rs)
 
 static void set_range_pins(ohm_range_t r)
 {
+    // 先全部关断
+    GPIO_SetBits(GPIOA, GPIO_Pin_2);
+    GPIO_SetBits(GPIOA, GPIO_Pin_3);
+    GPIO_SetBits(GPIOB, GPIO_Pin_1);
+
     switch (r)
     {
-        case RANGE_OHM:   // Ω 档：PA2=0, PA3=1
-            GPIO_ResetBits(GPIOA, GPIO_Pin_2);
-            GPIO_SetBits(GPIOA,   GPIO_Pin_3);
+        case RANGE_OHM:
+            GPIO_ResetBits(GPIOA, GPIO_Pin_2); // Ω档导通
             break;
-        case RANGE_KOHM:  // kΩ 档：PA2=1, PA3=0
-            GPIO_SetBits(GPIOA,   GPIO_Pin_2);
-            GPIO_ResetBits(GPIOA, GPIO_Pin_3);
+        case RANGE_KOHM:
+            GPIO_ResetBits(GPIOA, GPIO_Pin_3); // kΩ档导通
             break;
-        case RANGE_MOHM:  // MΩ 档：PA2=1, PA3=1（或按你硬件）
-            GPIO_SetBits(GPIOA,   GPIO_Pin_2);
-            GPIO_SetBits(GPIOA,   GPIO_Pin_3);
+        case RANGE_MOHM:
+            GPIO_ResetBits(GPIOB, GPIO_Pin_1); // MΩ档导通
             break;
     }
 }
@@ -878,16 +900,36 @@ static void LCD_DISPLAY_UPDATE(void)
 #pragma endregion
 
 #pragma region 电池电量检测
-// ★ PC4 接 ADC：打开模拟复用 + 输入无上下拉
-static void Battery_GPIO_Init(void)
+// 配置三个输入IO口和电池电压输入
+static void MeterADC_GPIO_Init(void)
 {
     GPIO_InitTypeDef gi;
+
+    // PA1 -> 电压表输入
     gi.GPIO_Mode = GPIO_Mode_In;
-    gi.GPIO_Pin  = GPIO_Pin_4;
+    gi.GPIO_Pin  = GPIO_Pin_1;
     gi.GPIO_Pull = GPIO_Pull_NoPull;
+    GPIO_Init(GPIOA, &gi);
+    GPIO_DigitalRemapConfig(AFIOA, GPIO_Pin_1, AFIO_AF_0, DISABLE);
+    GPIO_AnalogRemapConfig(AFIOA, GPIO_Pin_1, ENABLE);
+
+    // PD2 -> 电流表输入
+    gi.GPIO_Pin = GPIO_Pin_2;
+    GPIO_Init(GPIOD, &gi);
+    GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_2, AFIO_AF_0, DISABLE);
+    GPIO_AnalogRemapConfig(AFIOD, GPIO_Pin_2, ENABLE);
+
+    // PD3 -> 欧姆表输入
+    gi.GPIO_Pin = GPIO_Pin_3;
+    GPIO_Init(GPIOD, &gi);
+    GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_3, AFIO_AF_0, DISABLE);
+    GPIO_AnalogRemapConfig(AFIOD, GPIO_Pin_3, ENABLE);
+
+    // PC4 -> 电池
+    gi.GPIO_Pin = GPIO_Pin_4;
     GPIO_Init(GPIOC, &gi);
-    GPIO_DigitalRemapConfig(AFIOC,GPIO_Pin_4,AFIO_AF_0,DISABLE);
-    GPIO_AnalogRemapConfig(AFIOC, GPIO_Pin_4, ENABLE);  // PC4→ADC
+    GPIO_DigitalRemapConfig(AFIOC, GPIO_Pin_4, AFIO_AF_0, DISABLE);
+    GPIO_AnalogRemapConfig(AFIOC, GPIO_Pin_4, ENABLE);
 }
 
 static int Battery_LevelFromV(float v)
@@ -980,7 +1022,7 @@ void BuzzerInit(void)
 // ——（可选）你的“2分钟 <10% 变化自动休眠”的检测 ——
 // 若已集成 IdleDetector_*，可在 Update 里调用 IdleDetector_Update(v_meas);
 
-// 小工具：把 dv -> 物理电压（V）
+// 乘上放大倍数
 static inline float Volt_From_DV(float dv) {
     return dv * K_VOLT_SLOPE;
 }
@@ -1002,7 +1044,7 @@ void VoltTask_Update(void)
     if ((int32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
     g_volt.next_ms = now;
 
-    float v_raw = read_vin(AVG_N);
+    float v_raw = read_vin(METER_MODE_VOLT, AVG_N);
     // LOGF("ticks=%u v=%d idle=%d\r\n", s_ms_ticks,(int)(v_raw*1000.0f+0.5f),idle_last_ms);
 
     // 对应换算公式是 ( vout - 0.9983 ) * 10000.0 / 379.2
@@ -1032,29 +1074,6 @@ void VoltTask_Update(void)
         // }
         v_tmp = v_tmp >= 0.0f ? vabs : -vabs;
     }
-    // float delta = fabs(v_tmp-g_volt.last_v);
-    // if (delta <= 0.05f)
-    // {
-    //     return;
-    // }
-    // else if (delta >= 0.1f)
-    // {
-    //     g_volt.last_v = v_tmp;
-    // }else
-    // {
-    //     // 正电压零点漂移
-    //     if (g_volt.last_v > 0.0f)
-    //     {
-    //         g_volt.last_v -= 0.1f;
-    //     }
-    //     g_volt.last_v += delta * 0.5f;
-    // }
-    
-    // // 舍弃微小电压
-    // if (fabs(g_volt.last_v) <= 0.05f)
-    // {
-    //     g_volt.last_v = 0.0f;
-    // }
     g_volt.last_v = v_tmp;
 }
 #pragma endregion
@@ -1062,20 +1081,10 @@ void VoltTask_Update(void)
 #pragma region 电流表业务逻辑
 void AmpTask_Init(void)
 {
-    // PA2 作为量程控制：0=A档，1=mA档
-    GPIO_InitTypeDef GPIO_InitStruct;
-    GPIO_InitStruct.GPIO_Mode = GPIO_Mode_OutPP;
-    GPIO_InitStruct.GPIO_Pull = GPIO_Pull_NoPull;
-    GPIO_InitStruct.GPIO_Pin  = GPIO_Pin_2;
-    GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    GPIO_SetBits(GPIOA, GPIO_Pin_2); // 默认 mA 档
-    g_amp.mAflag = true;
-    g_amp.st     = AMP_S_MEASURE_mA;
     g_amp.iamp = 0.0f;
-
-    g_volt.next_ms = s_ms_ticks;  // 立即可以更新
-    LOGS("Amp init: mA-range (PA2=1)\r\n");
+    g_amp.vin  = 0.0f;
+    g_volt.next_ms = s_ms_ticks;
+    LOGS("Amp init\r\n");
 }
 static inline float current_compensate(float i_meas)
 {
@@ -1110,106 +1119,24 @@ static inline float current_compensate(float i_meas)
 
     return i;
 }
-/*
-void AmpTask_Update(void)
-{
-    // 1) 节流：到点再测
-    uint32_t now = s_ms_ticks;
-    if ((int32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
-    g_volt.next_ms = now;
-    // 无滤波
-    g_amp.vin = read_vin(AVG_N);
 
-    float dv = V_DV(g_amp.vin);
-    if (fabsf(dv) < ZERO_BAND_V) {                // ★ 零点死区：|ΔV|<4mV 视为 0
-        if (g_amp.mAflag)
-        {
-            g_amp.iamp = 0.0f;
-        } else if (fabsf(dv) < (I_MA_MAX * 0.1f * GAIN_A)) {
-            g_amp.mAflag = true;
-            GPIO_SetBits(GPIOA, GPIO_Pin_2);
-            g_amp.st = AMP_S_MEASURE_mA;
-        }
-        return; 
-    }
-    // 电流表改成差分输入，因此需要乘 2.0f 得到最终的电流
-    switch (g_amp.st)
-    {
-    case AMP_S_MEASURE_mA:
-        g_amp.iamp = dv * MA_SLOPE_FIX / GAIN_mA;// mA放大了34倍
-        // 正向电压有偏置，反映到测量电流上，导致正向电流由0.004A的零点漂移，反向则没有
-        // if (g_amp.iamp>0.f)
-        // {
-        //     if (g_amp.iamp<0.005f)
-        //     {
-        //         g_amp.iamp *= 0.4f;
-        //     }else
-        //     {
-        //         g_amp.iamp -= 0.004f;
-        //     }
-        // }
-        LOGF("mA=%d v=%d\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
-        // 退出条件
-        if (g_amp.iamp >= I_MA_MAX||g_amp.iamp <= -I_MA_MAX) {
-            // 超 mA 档上限 -> 重新判档 mA档只能测到280mA
-            LOGS("mA->A\r\n");
-            GPIO_ResetBits(GPIOA, GPIO_Pin_2);
-            g_amp.mAflag = false;
-            g_amp.st     = AMP_S_MEASURE_A;
-        }
-        
-        break;
-
-    case AMP_S_MEASURE_A:
-        g_amp.iamp = dv * 10.0f / GAIN_A; // A放大了4倍
-        // 误差补偿 10mA
-        // if (g_amp.iamp<1.f)
-        // {
-        //     g_amp.iamp += 0.01f;
-        // }
-        LOGF("A=%d v=%d\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
-        // 退出条件：A档不测小电流，A档要测到280mA以上的
-        // if (g_amp.iamp <= I_MA_MAX && g_amp.iamp >= -I_MA_MAX) {
-        //     // 超 A 档下限 -> 重新判档 A档不测小电流，A档要测到294mA以上的
-        //     LOGS("A->mA\r\n");
-        //     GPIO_SetBits(GPIOA, GPIO_Pin_2);
-        //     g_amp.mAflag = true;
-        //     g_amp.st = AMP_S_MEASURE_mA;
-        // }
-        // 超 A 档上限
-        if (g_amp.iamp >= I_FULLSCALE_A) {
-            LOGS("OVER: >=2.5A\r\n");
-            g_amp.iamp = I_FULLSCALE_A;
-        }else if (g_amp.iamp <= -I_FULLSCALE_A) {
-            LOGS("OVER: <=-2.5A\r\n");
-            g_amp.iamp = -I_FULLSCALE_A;
-        }
-        
-        break;
-    }
-}
-*/
 void AmpTask_Update2(void)
 {
-    // 节流：到点再测
     uint32_t now = s_ms_ticks;
     if ((int32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
     g_volt.next_ms = now;
 
-    g_amp.vin  = read_vin(AVG_N);
-    
-    g_amp.iamp = V_DV(g_amp.vin) / 3.33f * 10.0f; // A放大了4倍
-    g_amp.iamp = current_compensate(g_amp.iamp);  // ★ 误差补偿
+    g_amp.vin  = read_vin(METER_MODE_AMP, AVG_N);
 
-    // 超 A 档上限
+    float dv = V_DV(g_amp.vin);
+    g_amp.iamp = dv * 2.5f;   // TODO: 先用 2.5 A/V, 后续需要实际测试
+    g_amp.iamp = current_compensate(g_amp.iamp);
+
     if (g_amp.iamp >= I_FULLSCALE_A) {
-        LOGS("OVER: >=2.5A\r\n");
         g_amp.iamp = I_FULLSCALE_A;
-    }else if (g_amp.iamp <= -I_FULLSCALE_A) {
-        LOGS("OVER: <=-2.5A\r\n");
+    } else if (g_amp.iamp <= -I_FULLSCALE_A) {
         g_amp.iamp = -I_FULLSCALE_A;
     }
-    LOGF("mA=%d v=%d\r\n", (int)(g_amp.iamp * 1000.0f+0.5f), (int)(g_amp.vin * 1000.0f + 0.5f));
 }
 #pragma endregion
 
@@ -1220,10 +1147,10 @@ void OhmTask_Init(void)
     g_ohm.rx_display = 51000000.0f;
     g_volt.next_ms = s_ms_ticks;
 
-    MultiMeterIOOutputConfig(true); // 需要控制PA2/PA3时转为输出
-    g_ohm.range = RANGE_KOHM; // 开机默认处于kΩ档，然后根据电压切到 Ω或MΩ档
-    g_ohm.st = OHM_S_SELECT_RANGE;
-
+    OhmCtrl_GPIO_Init();
+    Ohm_EnableGround(true);     // 进入欧姆表时，黑表笔接地
+    g_ohm.range = RANGE_KOHM;
+    g_ohm.st = OHM_S_SELECT_RANGE;   // ← 补上这行
     set_range_pins(g_ohm.range);
     // LOGS("Ohm init\r\n");
 
@@ -1238,14 +1165,14 @@ void OhmTask_Update(void)
     uint32_t now = s_ms_ticks;
     if ((uint32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
     g_volt.next_ms = now;
-
+    // 档位选择
     if (g_ohm.st == OHM_S_SELECT_RANGE) {
         if (g_ohm.range != RANGE_KOHM)
         {
             g_ohm.range = RANGE_KOHM;
             set_range_pins(g_ohm.range);
         }
-        g_ohm.vin = read_vin(AVG_N);
+        g_ohm.vin = read_vin(METER_MODE_OHM, AVG_N);
         // kΩ档 测量 510Ω 0.176 530Ω 0.181以下的电阻 切Ω档
         if (g_ohm.vin<0.179f)
         {
@@ -1264,7 +1191,7 @@ void OhmTask_Update(void)
         // 测量完成 切到测量状态
         g_ohm.st = OHM_S_MEASURE;
     } else {
-        g_ohm.vin = read_vin(AVG_N);
+        g_ohm.vin = read_vin(METER_MODE_OHM, AVG_N);
 
         // 计算 Rx（原始）
         float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
@@ -1323,40 +1250,52 @@ void OhmTask_Update(void)
 #pragma endregion
 
 #pragma region 万用表初始化
-void check_meter_mode(void)
+// 切换万用表三种工作模式，分别是电压表、电流表、欧姆表
+static void SwitchMeterMode(meter_mode_t new_mode)
 {
-    if (GPIO_ReadDataBit(GPIOA,GPIO_Pin_2)==RESET)
-    {
-        if (GPIO_ReadDataBit(GPIOA,GPIO_Pin_3)==RESET)
-        {
-            LOGS("Volt Mode\r\n");
-            meter_mode = METER_MODE_VOLT;
-        }
-        else
-        {
-            LOGS("Amp Mode\r\n");
-            meter_mode = METER_MODE_AMP;
-        }
-    }
-    else
-    {
-        LOGS("Ohm Mode\r\n");
-        meter_mode = METER_MODE_OHM;
-    }
-}
+    if (meter_mode == new_mode && hadSetMultimeterInit) return;
 
+    // 先关闭欧姆相关硬件，避免串扰
+    OhmCtrl_GPIO_Init();
+    Ohm_AllOff();
+    Ohm_EnableGround(false);
+
+    // 清图标缓冲，避免残留
+    g_lcd_buf.mA_overf_neg_A_V_O_kO = 0;
+    g_lcd_buf.bat_25_50_75_100_MO &= ICON_BAT_BROAD;
+
+    meter_mode = new_mode;
+
+    switch (meter_mode)
+    {
+        case METER_MODE_VOLT:
+            VoltTask_Init();
+            break;
+        case METER_MODE_AMP:
+            AmpTask_Init();
+            break;
+        case METER_MODE_OHM:
+            OhmCtrl_GPIO_Init();
+            Ohm_EnableGround(true);
+            OhmTask_Init();
+            break;
+    }
+
+    // 短按提示音
+    PWM_Cmd(TIM1, ENABLE);
+    delay_ms(25);
+    PWM_Cmd(TIM1, DISABLE);
+}
+// 初始化万用表子模块蜂鸣器、LCD、电池电量检测等
 void MultimeterInit()
 {
-    Battery_GPIO_Init();
-    ADC_Driver();// PA1 和 PC4 作为 ADC 输入
+    MeterADC_GPIO_Init();
+    ADC_Driver();
 
     if (!hadSetMultiMeterMode)
     {
-        LOGS("Meter IO Init");
-        // 配置 PA2 PA3 输入模式 根据情况选择电流表、电压表或欧姆表
-        MultiMeterIOOutputConfig(false);
-        // init state: PA2 PA3 , LOW LOW mean VoltTest, LOW HIGH mean AmpTest, HIGH HIGH mean OhmTest
-        check_meter_mode();
+        LOGS("Meter IO Init\r\n");
+        meter_mode = METER_MODE_VOLT;   // 默认电压表
         hadSetMultiMeterMode = true;
     }
 
@@ -1369,25 +1308,7 @@ void MultimeterInit()
 
     BatteryTask_Init();
 
-    switch (meter_mode)
-    {
-    case METER_MODE_VOLT:
-        VoltTask_Init();
-        break;
-    case METER_MODE_AMP:
-        AmpTask_Init();
-        break;
-    case METER_MODE_OHM:
-        OhmTask_Init();
-        break;
-    default:
-        break;
-    }
-
-    // 初始化仪表成功提示音
-    PWM_Cmd(TIM1, ENABLE);
-    delay_ms(30);
-    PWM_Cmd(TIM1, DISABLE);
+    SwitchMeterMode(meter_mode);
     
     hadSetMultimeterInit = true;
 }
@@ -1410,7 +1331,8 @@ int main (void)
     UART_Driver();
     LOGS("UART Init");
 #endif
-#if 0 // 读取开机时的 2V 输出端 电压
+#if 1 
+    // 读取开机时的 2V 输出端 电压
     s32 ADC_average=0;
     ADC_InitTypeDef  ADC_InitStruct;
 	ADC_StructInit(&ADC_InitStruct);
@@ -1419,7 +1341,7 @@ int main (void)
 	ADC_InitStruct.ADC_TriggerSource = ADC_TriggerSource_Software;
 	ADC_InitStruct.ADC_TimerTriggerSource=ADC_TimerTriggerSource_TIM1ADC;						//定时源触发选择TIM0事件
 	ADC_InitStruct.ADC_Align = ADC_Align_Left;					//左对齐
-	ADC_InitStruct.ADC_Channel=ADC_Channel_12;						
+	ADC_InitStruct.ADC_Channel=ADC_Channel_12;// 参考芯片手册说明						
 	ADC_InitStruct.ADC_ReferencePositive= ADC_ReferencePositive_BG2v0;	//选择VDDA作为正端参考电平
 	ADC_InitStruct.ADC_BGVoltage=ADC_BGVoltage_BG1v0;//BGS电压1.0v
 	ADC_Init(ADC, &ADC_InitStruct);
@@ -1431,20 +1353,29 @@ int main (void)
 		while(!ADC_GetFlagStatus(ADC, ADC_FLAG_EOC));		//等待ADC转换完成
 		ADC_average += (s16)ADC_GetConversionValue(ADC);	//获取结果
 	}
-    ADC_average/=100;
+    ADC_average /=100;
 	ADC_average >>= 2;//左对齐处理
 	V_REF=((float)ADC_average)*2.0/8192;
     LOGF("V_REF:%d\r\n", (int)(V_REF*1000.0f+0.5f));
-
-    // MultimeterInit();
+    // 测试开机默认处于电压表
+    MultimeterInit();
     while (1)
     {
-        // g_amp.vin = read_vin(AVG_N);
+        g_volt.last_v = read_vin(METER_MODE_VOLT,AVG_N);
+        LOGF("g_volt.last_v:%d\r\n", (int)(g_volt.last_v*1000.0f+0.5f));
+
+        // g_amp.vin = read_vin(METER_MODE_AMP,AVG_N);
         // LOGF("g_amp.vin:%d\r\n", (int)(g_amp.vin*1000.0f+0.5f));
 
-        LOGF("g_amp.vin:%d\r\n", (int)(V_REF*10000.0f));
-
-        LCD_Show_digits((int)(V_REF*1000.0f+0.5f), 1);
+        // 打印ADC扫描通道的转换结果 PA1,PD2,PD3,PC4 ADC读数的原始值
+        LOGF("PA1:%d,PD2:%d,PD3:%d,PC4:%d\r\n",
+             (int)(g_adc_pa1_raw+0.5f), 
+             (int)(g_adc_pd2_raw+0.5f), 
+             (int)(g_adc_pd3_raw+0.5f), 
+             (int)(g_adc_pc4_raw+0.5f)
+        );
+        // 想测试哪一项就改它
+        LCD_Show_digits((int)(g_volt.last_v*1000.0f+0.5f), 1);
         delay_ms(1000);
     }
 #endif
@@ -1508,6 +1439,18 @@ int main (void)
             if(!hadSetMultimeterInit)
             {
                 MultimeterInit();
+            }
+            // 处理短按切换电流表、欧姆表的事件
+            if (g_short_press_event)
+            {
+                g_short_press_event = 0;
+
+                meter_mode_t next = meter_mode;
+                if (meter_mode == METER_MODE_VOLT) next = METER_MODE_AMP;
+                else if (meter_mode == METER_MODE_AMP) next = METER_MODE_OHM;
+                else next = METER_MODE_VOLT;
+
+                SwitchMeterMode(next);
             }
             switch (meter_mode)
             {
