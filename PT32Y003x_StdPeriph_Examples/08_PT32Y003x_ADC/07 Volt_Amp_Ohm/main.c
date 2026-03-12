@@ -27,8 +27,10 @@ char log_buffer[64];  // 用于打印日志 足够存储格式化字符串
 #endif
 
 // 读到的ADC原始数据 测量端和电池
-static uint16_t g_adc_pa1_raw = 0;  // 序号0（PA1）
-static uint16_t g_adc_pc4_raw = 0;  // 序号1（PC4）
+static uint16_t g_adc_pa1_raw = 0;  // PA1 电压表输入
+static uint16_t g_adc_pd2_raw = 0;  // 电流表输入
+static uint16_t g_adc_pd3_raw = 0;  // 欧姆表输入
+static uint16_t g_adc_pc4_raw = 0;  // PC4 电池电压输入
 // 关机请求
 volatile uint8_t poweroff_request = 0;
 volatile uint8_t g_require_release_before_poweroff = 0; // 0=未要求, 1=要求先松手
@@ -68,6 +70,24 @@ volatile uint8_t g_run_mode = RUN_MODE_NORMALWORK;   // 默认处于休眠模式
 // 万用表类型： 电压表 电流表 欧姆表
 typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } meter_mode_t;
 static meter_mode_t meter_mode = -1;
+
+// ===== 三合一新版引脚定义 =====
+#define ADC_CH_VOLT      ADC_Channel_1    // PA1
+#define ADC_CH_AMP       ADC_Channel_6   // PD2
+#define ADC_CH_OHM       ADC_Channel_5   // PD3
+#define ADC_CH_BATT      ADC_Channel_7    // PC4
+
+#define PIN_RANGE_OHM_PORT   GPIOA
+#define PIN_RANGE_OHM        GPIO_Pin_2   // Ω档
+#define PIN_RANGE_KOHM_PORT  GPIOA
+#define PIN_RANGE_KOHM       GPIO_Pin_3   // kΩ档
+#define PIN_RANGE_MOHM_PORT  GPIOB
+#define PIN_RANGE_MOHM       GPIO_Pin_1   // MΩ档
+
+#define PIN_OHM_GND_PORT     GPIOD
+#define PIN_OHM_GND          GPIO_Pin_4   // 欧姆表黑表笔接地 NMOS
+
+// 模式切换按键仍然是 PC5
 
 // 开机零点 电流表一号
 // float V_REF = 0.994f;
