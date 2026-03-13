@@ -91,12 +91,8 @@ static meter_mode_t meter_mode = METER_MODE_VOLT;
 
 // 模式切换按键仍然是 PC5
 
-// 开机零点 电流表一号
-// float V_REF = 0.994f;
-// 开机零点 电流表二号
-// float V_REF = 0.991f;
-// 开机零点 电流表三号
-float V_REF = 0.989f;
+// 开机零点 电压表一号
+float V_REF = 0.926f;
 // 减去加法器一端的1V参考电压
 static inline float V_DV(float v_raw) { return v_raw - V_REF; }
 
@@ -187,10 +183,8 @@ static struct {
 #endif
 // 电压表分压公式
 #ifndef K_VOLT_SLOPE
-// ((1000.0f+81.0f)/81.0f/2.0f)
-// #define K_VOLT_SLOPE            6.66f
-// ((1000.0f+81.0f)/81.0f*2.0f)
-#define K_VOLT_SLOPE            26.39f
+// ((1000.0f+81.0f)/81.0f)
+#define K_VOLT_SLOPE            13.20f
 #endif
 #define VOLT_ZERO_OFFSET     +0.07f   // 正向零点漂移
 // 是否做上/下限钳位（例如 0~12V）
@@ -646,7 +640,7 @@ static void ADC_ScanOnce(void)
     uint16_t d2 = (uint16_t)ADC_GetScanData(ADC, ADC_ScanChannel_2);
     uint16_t d3 = (uint16_t)ADC_GetScanData(ADC, ADC_ScanChannel_3);
 
-    g_adc_pa1_raw = (d0 >> 3);// 左对齐 → 还原到 12bit 范围
+    g_adc_pa1_raw = (d0 >> 3);// 左对齐 → 还原到 12bit 范围 0~4096
     g_adc_pd2_raw = (d1 >> 3);
     g_adc_pd3_raw = (d2 >> 3);
     g_adc_pc4_raw = (d3 >> 3);
@@ -1053,9 +1047,10 @@ void VoltTask_Update(void)
     float v_tmp = Volt_From_DV(dv);    // 真实输入（V，带正负号）
     // 正向零点漂移
     // v_tmp += VOLT_ZERO_OFFSET;
-    
+
+#if 0
     float vabs = fabsf(v_tmp);
-    // 门限电压
+    // 门限电压，小于 0.04V 视为 0V。0.04~0.07V 则减半。其他情况做补偿
     if (vabs <= 0.04f) 
         v_tmp = 0.f;
     else if (vabs <= VOLT_ZERO_OFFSET) 
@@ -1074,6 +1069,8 @@ void VoltTask_Update(void)
         // }
         v_tmp = v_tmp >= 0.0f ? vabs : -vabs;
     }
+#endif
+
     g_volt.last_v = v_tmp;
 }
 #pragma endregion
@@ -1331,54 +1328,36 @@ int main (void)
     UART_Driver();
     LOGS("UART Init");
 #endif
-#if 1 
-    // 读取开机时的 2V 输出端 电压
-    s32 ADC_average=0;
-    ADC_InitTypeDef  ADC_InitStruct;
-	ADC_StructInit(&ADC_InitStruct);
-	ADC_InitStruct.ADC_Prescaler = 64;						 	
-	ADC_InitStruct.ADC_Mode = ADC_Mode_Single;						//单次转换模式
-	ADC_InitStruct.ADC_TriggerSource = ADC_TriggerSource_Software;
-	ADC_InitStruct.ADC_TimerTriggerSource=ADC_TimerTriggerSource_TIM1ADC;						//定时源触发选择TIM0事件
-	ADC_InitStruct.ADC_Align = ADC_Align_Left;					//左对齐
-	ADC_InitStruct.ADC_Channel=ADC_Channel_12;// 参考芯片手册说明						
-	ADC_InitStruct.ADC_ReferencePositive= ADC_ReferencePositive_BG2v0;	//选择VDDA作为正端参考电平
-	ADC_InitStruct.ADC_BGVoltage=ADC_BGVoltage_BG1v0;//BGS电压1.0v
-	ADC_Init(ADC, &ADC_InitStruct);
-    ADC_Cmd(ADC, ENABLE);		//启动ADC外设功能
-    while(!ADC_GetFlagStatus(ADC, ADC_FLAG_RDY));	//等待ADC启动完成
-    for(uint8_t i=0;i<100;i++)
-    {
-		ADC_StartOfConversion(ADC);	//启动转换
-		while(!ADC_GetFlagStatus(ADC, ADC_FLAG_EOC));		//等待ADC转换完成
-		ADC_average += (s16)ADC_GetConversionValue(ADC);	//获取结果
-	}
-    ADC_average /=100;
-	ADC_average >>= 2;//左对齐处理
-	V_REF=((float)ADC_average)*2.0/8192;
-    LOGF("V_REF:%d\r\n", (int)(V_REF*1000.0f+0.5f));
+
+#if 1
     // 测试开机默认处于电压表
     MultimeterInit();
     while (1)
     {
         g_volt.last_v = read_vin(METER_MODE_VOLT,AVG_N);
-        LOGF("g_volt.last_v:%d\r\n", (int)(g_volt.last_v*1000.0f+0.5f));
+        g_volt.last_v = V_DV(g_volt.last_v);
+        // VoltTask_Update();
+        // 0313拟合结果是被测电压 = (g_volt.last_v*13.20 - 0.55)
+        LOGF("g_volt.last_v:%d\r\n", (int)(g_volt.last_v*1000.0f));
 
         // g_amp.vin = read_vin(METER_MODE_AMP,AVG_N);
         // LOGF("g_amp.vin:%d\r\n", (int)(g_amp.vin*1000.0f+0.5f));
 
         // 打印ADC扫描通道的转换结果 PA1,PD2,PD3,PC4 ADC读数的原始值
-        LOGF("PA1:%d,PD2:%d,PD3:%d,PC4:%d\r\n",
-             (int)(g_adc_pa1_raw+0.5f), 
-             (int)(g_adc_pd2_raw+0.5f), 
-             (int)(g_adc_pd3_raw+0.5f), 
-             (int)(g_adc_pc4_raw+0.5f)
+        LOGF("PA1:%d,PD2:%d,PD3:%d,PC4:%d,V_REF:%d\r\n",
+             (int)(g_adc_pa1_raw), 
+             (int)(g_adc_pd2_raw), 
+             (int)(g_adc_pd3_raw), 
+             (int)(g_adc_pc4_raw),
+             (int)(V_REF*1000.0f)
         );
         // 想测试哪一项就改它
-        LCD_Show_digits((int)(g_volt.last_v*1000.0f+0.5f), 1);
+        LCD_Show_digits((int)(g_volt.last_v*1000.0f), 1);
+        // LCD_DISPLAY_UPDATE();
         delay_ms(1000);
     }
 #endif
+
 #if 0
  
     // 测试电阻表三个档位的换挡阈值
