@@ -63,7 +63,7 @@ volatile uint8_t  s_pwr_last_sample  = 1;   // 1=未按, 0=按下
 
 // 万用表初始模式已设置
 static bool hadSetMultiMeterMode = false;
-// 万用表工作需要的外设已配置
+// TODO： 变量重命名，提高可读性。万用表工作需要的外设已配置
 static bool hadSetMultimeterInit = false;
 // 运行模式：工作态 唤醒态 等待态
 typedef enum { RUN_MODE_NORMALWORK = 0, RUN_MODE_DEEPSLEEP = 1, RUN_MODE_WAKEUP = 2} run_mode_t;
@@ -92,7 +92,7 @@ static meter_mode_t meter_mode = METER_MODE_VOLT;
 // 模式切换按键仍然是 PC5
 
 // 开机零点 电压表一号
-float V_REF = 0.926f;
+float V_REF = 0.9954f;
 // 减去加法器一端的1V参考电压
 static inline float V_DV(float v_raw) { return v_raw - V_REF; }
 
@@ -183,10 +183,10 @@ static struct {
 #endif
 // 电压表分压公式
 #ifndef K_VOLT_SLOPE
-// ((1000.0f+81.0f)/81.0f)
-#define K_VOLT_SLOPE            13.20f
+// ((1000.0f+82.0f)/82.0f)
+#define K_VOLT_SLOPE            26.39f
 #endif
-#define VOLT_ZERO_OFFSET     +0.07f   // 正向零点漂移
+#define VOLT_ZERO_OFFSET     +0.063f   // 正向零点漂移
 // 是否做上/下限钳位（例如 0~12V）
 #ifndef VOLT_MAX_V
 #define VOLT_MAX_V              12.0f
@@ -319,13 +319,7 @@ void UART_Mode_Config(void)
     UART_Init(LOG_UART, &UART_InitStruct);
 
 }
-/*******************************************************************************
-*Function:	UART_Driver
-*Description:	UART模块驱动函数
-*Input:		无
-*Return:		无
-*Others:
-*******************************************************************************/
+// 串口驱动
 void UART_Driver(void)
 {
 	UART_GPIO_Config();
@@ -707,7 +701,7 @@ static inline float _interp_err(float iabs, float e0, float efs, float ifs) {
 #pragma endregion
 
 #pragma region 初始化和屏幕显示
-
+// LCD 初始化
 void LCDInit(void)
 {
     GPIO_InitTypeDef GPIO_InitStruct;
@@ -891,9 +885,7 @@ static void LCD_DISPLAY_UPDATE(void)
     LCD_Show_digits(g_lcd_buf.num4, g_lcd_buf.dotpos);
     LCD_ShowIcon(g_lcd_buf.mA_overf_neg_A_V_O_kO, g_lcd_buf.bat_25_50_75_100_MO);
 }
-#pragma endregion
 
-#pragma region 电池电量检测
 // 配置三个输入IO口和电池电压输入
 static void MeterADC_GPIO_Init(void)
 {
@@ -926,6 +918,9 @@ static void MeterADC_GPIO_Init(void)
     GPIO_AnalogRemapConfig(AFIOC, GPIO_Pin_4, ENABLE);
 }
 
+#pragma endregion
+
+#pragma region 电池电量检测
 static int Battery_LevelFromV(float v)
 {
     if (v >= BATT_TH_4) return 4;
@@ -934,7 +929,7 @@ static int Battery_LevelFromV(float v)
     if (v >= BATT_TH_1) return 1;
     return 0;
 }
-
+// 电池电量监测任务初始化
 void BatteryTask_Init(void)
 {
     g_batt.next_ms = s_ms_ticks;
@@ -969,6 +964,7 @@ void BatteryTask_Update(void)
 #pragma endregion
 
 #pragma region 蜂鸣器初始化
+// 蜂鸣器初始化
 void BuzzerInit(void)
 {
     GPIO_DigitalRemapConfig(AFIOC, GPIO_Pin_6, AFIO_AF_2,ENABLE);//CH1
@@ -1043,18 +1039,29 @@ void VoltTask_Update(void)
 
     // 对应换算公式是 ( vout - 0.9983 ) * 10000.0 / 379.2
     float dv = V_DV(v_raw);
+    // if (fabsf(dv) < 0.027f)
+    // {
+    //     // 忽略微小的波动
+    //     dv = 0;
+    // }else if (dv >= 0.027f) {
+    //     // 正向误差
+    //     dv += 0.027f;
+    // } else {
+    //     // 反向误差
+    //     dv -= 0.027f;
+    // }
+
     // 减缓微小的波动
     float v_tmp = Volt_From_DV(dv);    // 真实输入（V，带正负号）
     // 正向零点漂移
     // v_tmp += VOLT_ZERO_OFFSET;
-
 #if 0
     float vabs = fabsf(v_tmp);
     // 门限电压，小于 0.04V 视为 0V。0.04~0.07V 则减半。其他情况做补偿
-    if (vabs <= 0.04f) 
+    if (vabs <= 0.04f)
         v_tmp = 0.f;
     else if (vabs <= VOLT_ZERO_OFFSET) 
-        v_tmp *= 0.5f;
+        v_tmp *= 0.45f;
     else {
         // 正向零点漂移：重新测量正负电压的误差-12V -6V -0.1V +0.1V +6V +12V
         vabs += VOLT_ZERO_OFFSET;
@@ -1288,7 +1295,7 @@ void MultimeterInit()
 {
     MeterADC_GPIO_Init();
     ADC_Driver();
-
+    // TODO: 只在初始化时设置默认电压表，唤醒后不改变，仍然会是唤醒前的状态吗？
     if (!hadSetMultiMeterMode)
     {
         LOGS("Meter IO Init\r\n");
@@ -1299,7 +1306,8 @@ void MultimeterInit()
 	BuzzerInit();
 
     LCDInit();
-    // 唤醒/重初始化后：复位空闲检测器 和 LCD显示缓冲区
+
+    // 唤醒/初始化后：复位空闲检测器 和 LCD显示缓冲区
     memset((void*)&g_idle, 0, sizeof(g_idle));
     memset((void*)&g_lcd_buf, 0, sizeof(g_lcd_buf));
 
@@ -1312,6 +1320,7 @@ void MultimeterInit()
 #pragma endregion
 
 #pragma region 主循环逻辑
+// 定时器时钟初始化
 void first_init(void)
 {
     SysTick_Init_1kHz();// 系统时钟定时器 us ms 计时已测试 准确
@@ -1328,22 +1337,33 @@ int main (void)
     UART_Driver();
     LOGS("UART Init");
 #endif
-
+    // 测试 ADC 功能
 #if 1
     // 测试开机默认处于电压表
     MultimeterInit();
     while (1)
     {
-        g_volt.last_v = read_vin(METER_MODE_VOLT,AVG_N);
-        g_volt.last_v = V_DV(g_volt.last_v);
-        // VoltTask_Update();
-        // 0313拟合结果是被测电压 = (g_volt.last_v*13.20 - 0.55)
+        // 测试电压表
+        // g_volt.last_v = read_vin(METER_MODE_VOLT,AVG_N);
+        // 单独计算，减去初始的
+        // g_volt.last_v = V_DV(g_volt.last_v);
+        // 已包含所有相关计算
+        VoltTask_Update();
+        
         LOGF("g_volt.last_v:%d\r\n", (int)(g_volt.last_v*1000.0f));
 
+        // 测试电流表
         // g_amp.vin = read_vin(METER_MODE_AMP,AVG_N);
         // LOGF("g_amp.vin:%d\r\n", (int)(g_amp.vin*1000.0f+0.5f));
 
-        // 打印ADC扫描通道的转换结果 PA1,PD2,PD3,PC4 ADC读数的原始值
+        // 测试欧姆表
+        // g_ohm.vin = read_vin(METER_MODE_OHM,AVG_N);
+        // LOGF("g_ohm.vin:%d\r\n", (int)(g_ohm.vin*1000.0f+0.5f));
+
+        // 测试电池电量
+        BatteryTask_Update();
+
+        // 打印ADC扫描通道的ADC读数的原始值 PA1,PD2,PD3,PC4 
         LOGF("PA1:%d,PD2:%d,PD3:%d,PC4:%d,V_REF:%d\r\n",
              (int)(g_adc_pa1_raw), 
              (int)(g_adc_pd2_raw), 
@@ -1351,66 +1371,17 @@ int main (void)
              (int)(g_adc_pc4_raw),
              (int)(V_REF*1000.0f)
         );
-        // 想测试哪一项就改它
-        LCD_Show_digits((int)(g_volt.last_v*1000.0f), 1);
-        // LCD_DISPLAY_UPDATE();
+
+        // 测试LCD
+        // LCD_Show_digits((int)(g_volt.last_v*1000.0f), 2);
+        // 刷新LCD显示
+        LCD_DISPLAY_UPDATE();
+        
         delay_ms(1000);
     }
 #endif
 
-#if 0
- 
-    // 测试电阻表三个档位的换挡阈值
-    MultimeterInit();
-    // g_ohm.range = RANGE_KOHM;
-    // set_range_pins(g_ohm.range);
-
-    // 进入 mA 档
-    // GPIO_SetBits(GPIOA, GPIO_Pin_2);
-    // g_amp.mAflag = true;
-    // g_amp.st     = AMP_S_MEASURE_mA;
-    // 留在 A 档
-    GPIO_ResetBits(GPIOA, GPIO_Pin_2);
-    g_amp.mAflag = false;
-    g_amp.st     = AMP_S_MEASURE_A;
-    while (1)
-    {
-        delay_ms(300);
-        // continue;
-        // 读取电压
-        // g_ohm.vin = read_vin(AVG_N);
-
-        // 计算 Rx
-        // float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
-        //            (g_ohm.range == RANGE_KOHM) ? RS_KOHM_RAW : RS_MOHM_RAW;
-        // float rx = compute_rx(g_ohm.vin, Rs);
-        
-        // 分档校准
-        // if (g_ohm.range == RANGE_OHM)   rx = rx * GAIN_OHM  + OFFS_OHM;
-        // if (g_ohm.range == RANGE_KOHM)  rx = rx * GAIN_KOHM + OFFS_KOHM;
-        // if (g_ohm.range == RANGE_MOHM)  rx = rx * GAIN_MOHM + OFFS_MOHM;
-
-        // g_ohm.rx_display = rx;
-
-        g_amp.vin  = read_vin(AVG_N);
-        if (g_amp.st == AMP_S_MEASURE_mA)
-        {
-            g_amp.iamp = V_DV(g_amp.vin) / GAIN_mA * MA_SLOPE_FIX;
-        }else if (g_amp.st == AMP_S_MEASURE_A)
-        {
-            g_amp.iamp = (g_amp.vin - 0.99f) / 3.33f * 10.0f; // A放大了4倍
-            g_amp.iamp = current_compensate(g_amp.iamp);  // ★ 误差补偿
-        }
-        
-        BatteryTask_Update();     // ★ 每秒打印一次电池电量
-        // g_lcd_buf.num4 = (uint16_t)(g_ohm.vin*1000.0f+0.5f);
-        // 更新四位数字和小数点位置
-        // LCD_Show_digits(g_lcd_buf.num4, g_lcd_buf.dotpos);
-        LCD_DISPLAY_UPDATE();
-        LOGF("g_amp.vin:%d g_amp.iamp:%d \r\n", (int)(g_amp.vin*1000.0f+0.5f), (int)(g_amp.iamp*1000.0f+0.5f));
-    }
-#endif
-    deep_sleep();//方便测试关闭睡眠
+    deep_sleep();
     for (;;)
     {
         if (g_run_mode == RUN_MODE_NORMALWORK)
