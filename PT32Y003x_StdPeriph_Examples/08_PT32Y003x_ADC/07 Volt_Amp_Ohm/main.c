@@ -71,7 +71,8 @@ volatile run_mode_t g_run_mode = RUN_MODE_NORMALWORK;   // 默认处于休眠模
 
 // 万用表类型： 电压表 电流表 欧姆表
 typedef enum { METER_MODE_VOLT = 0, METER_MODE_AMP = 1,METER_MODE_OHM = 2 } meter_mode_t;
-static meter_mode_t meter_mode = METER_MODE_VOLT;
+// 开机默认模式
+static meter_mode_t meter_mode = METER_MODE_AMP;
 
 // ===== 三合一新版引脚定义 =====
 #define ADC_CH_VOLT      ADC_Channel_1    // PA1
@@ -96,7 +97,7 @@ float V_REF = 0.9954f;
 // 减去加法器一端的1V参考电压
 static inline float V_DV(float v_raw) { return v_raw - V_REF; }
 
-#define ADC_TO_V(x)   ((x) * 2.0f / 4095.0f) // ADC 原始值转电压
+#define ADC_TO_V(x)   ((x) * 3.0f / 4095.0f) // ADC 原始值转电压
 #define AVG_N            5 // 平均采样次数
 // 电流表
 #define I_ZERO_OFFSET_A     0.f   // 正向零点漂移
@@ -360,8 +361,8 @@ void ADC_Driver(void)
 	ADC_InitStruct.ADC_Align = ADC_Align_Left;					//左对齐
 	ADC_InitStruct.ADC_Channel = ADC_Channel_1;//PA1
 	ADC_InitStruct.ADC_BGVoltage=ADC_BGVoltage_BG1v0;//BGS电压1.0v
-	ADC_InitStruct.ADC_ReferencePositive = ADC_ReferencePositive_BG2v0;
-	ADC_BGCRSetBGNC(ADC);// SET ADC_BGNC BIT
+	ADC_InitStruct.ADC_ReferencePositive = ADC_ReferencePositive_VDD;
+	// ADC_BGCRSetBGNC(ADC);// SET ADC_BGNC BIT
     
     delay_ms(10);
 
@@ -1039,6 +1040,7 @@ void VoltTask_Update(void)
 
     // 对应换算公式是 ( vout - 0.9983 ) * 10000.0 / 379.2
     float dv = V_DV(v_raw);
+    // ① 消抖
     // if (fabsf(dv) < 0.027f)
     // {
     //     // 忽略微小的波动
@@ -1293,6 +1295,7 @@ static void SwitchMeterMode(meter_mode_t new_mode)
 // 初始化万用表子模块蜂鸣器、LCD、电池电量检测等
 void MultimeterInit()
 {
+    // 输入模式配置
     MeterADC_GPIO_Init();
     ADC_Driver();
     // TODO: 只在初始化时设置默认电压表，唤醒后不改变，仍然会是唤醒前的状态吗？
@@ -1312,9 +1315,20 @@ void MultimeterInit()
     memset((void*)&g_lcd_buf, 0, sizeof(g_lcd_buf));
 
     BatteryTask_Init();
+    // 临时改动，测电流表
+    // SwitchMeterMode(meter_mode);
+    // PD3 高 PD4 低 电流表模式
+    // 初始化并设置两个引脚
+    GPIO_InitTypeDef gi;
+    gi.GPIO_Mode = GPIO_Mode_OutPP;
+    gi.GPIO_Pull = GPIO_Pull_NoPull;
+    gi.GPIO_Pin  = GPIO_Pin_3;
+    GPIO_Init(GPIOD, &gi);
+    gi.GPIO_Pin  = GPIO_Pin_4;
+    GPIO_Init(GPIOD, &gi);
+    GPIO_SetBits(GPIOD, GPIO_Pin_3);
+    GPIO_ResetBits(GPIOD, GPIO_Pin_4);
 
-    SwitchMeterMode(meter_mode);
-    
     hadSetMultimeterInit = true;
 }
 #pragma endregion
@@ -1339,8 +1353,12 @@ int main (void)
 #endif
     // 测试 ADC 功能
 #if 1
+    // 临时改动，只测电流表
+    hadSetMultiMeterMode = true;
     // 测试开机默认处于电压表
     MultimeterInit();
+    // 临时改成电流表模式
+    AmpTask_Init();
     while (1)
     {
         // 测试电压表
@@ -1348,13 +1366,18 @@ int main (void)
         // 单独计算，减去初始的
         // g_volt.last_v = V_DV(g_volt.last_v);
         // 已包含所有相关计算
-        VoltTask_Update();
+        // VoltTask_Update();
         
-        LOGF("g_volt.last_v:%d\r\n", (int)(g_volt.last_v*1000.0f));
+        // LOGF("g_volt.last_v:%d\r\n", (int)(g_volt.last_v*1000.0f));
 
         // 测试电流表
-        // g_amp.vin = read_vin(METER_MODE_AMP,AVG_N);
+        g_amp.vin = read_vin(METER_MODE_AMP,AVG_N);
         // LOGF("g_amp.vin:%d\r\n", (int)(g_amp.vin*1000.0f+0.5f));
+        float i_calc = g_amp.vin / (0.1f * 10.1f);
+        LOGF("PD2_raw:%d, PD2_mV:%d, I_mA:%d\r\n",
+            (int)g_adc_pd2_raw,
+            (int)(g_amp.vin * 1000.0f + 0.5f),
+            (int)(i_calc * 1000.0f + 0.5f));
 
         // 测试欧姆表
         // g_ohm.vin = read_vin(METER_MODE_OHM,AVG_N);
@@ -1364,13 +1387,13 @@ int main (void)
         BatteryTask_Update();
 
         // 打印ADC扫描通道的ADC读数的原始值 PA1,PD2,PD3,PC4 
-        LOGF("PA1:%d,PD2:%d,PD3:%d,PC4:%d,V_REF:%d\r\n",
-             (int)(g_adc_pa1_raw), 
-             (int)(g_adc_pd2_raw), 
-             (int)(g_adc_pd3_raw), 
-             (int)(g_adc_pc4_raw),
-             (int)(V_REF*1000.0f)
-        );
+        // LOGF("PA1:%d,PD2:%d,PD3:%d,PC4:%d,V_REF:%d\r\n",
+        //      (int)(g_adc_pa1_raw), 
+        //      (int)(g_adc_pd2_raw), 
+        //      (int)(g_adc_pd3_raw), 
+        //      (int)(g_adc_pc4_raw),
+        //      (int)(V_REF*1000.0f)
+        // );
 
         // 测试LCD
         // LCD_Show_digits((int)(g_volt.last_v*1000.0f), 2);
