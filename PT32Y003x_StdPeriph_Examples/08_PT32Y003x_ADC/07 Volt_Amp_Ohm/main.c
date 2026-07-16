@@ -130,6 +130,13 @@ static meter_mode_t meter_mode = METER_MODE_VOLT;
 #define KOHM_TO_MOHM_TH_V       1.80f   // kΩ档高于此值，认为高阻/开路
 // 电阻表档位
 typedef enum { RANGE_OHM = 0, RANGE_KOHM, RANGE_MOHM } ohm_range_t;
+// kΩ档选档阈值
+#define KOHM_TO_OHM_RAW        120U
+#define KOHM_TO_MOHM_RAW      2014U
+
+// 各档退出阈值，稍微增加回差
+#define OHM_TO_SELECT_RAW      3700U
+#define MOHM_TO_SELECT_RAW      400U
 
 // LCD 显示配置
 #define LCD_UPDATE_MS         600U
@@ -178,6 +185,12 @@ static struct {
 #ifndef VOLT_MIN_V
 #define VOLT_MIN_V              (-12.0f)
 #endif
+// 电压表实测线性标定
+#define VOLT_CAL_GAIN          1.01f
+#define VOLT_CAL_OFFSET_V     (-0.05f)
+
+// 正向测量版：低于此值认为未接电压
+#define VOLT_ZERO_DEADBAND_V   0.10f
 // === 电压表状态机 ===
 typedef struct {
     uint32_t next_ms;   // 下次允许采样的时间戳(ms)
@@ -201,6 +214,7 @@ typedef enum { OHM_S_SELECT_RANGE = 0, OHM_S_MEASURE } ohm_state_t;
 static struct {
     ohm_state_t st;
     ohm_range_t range;
+    uint16_t raw;
     float vin;
     float rx_display;
 } g_ohm;
@@ -355,7 +369,7 @@ void ADC_Driver(void)
 	ADC_InitStruct.ADC_TimerTriggerSource=ADC_TimerTriggerSource_TIM1ADC;//定时源触发选择TIM0事件
 	ADC_InitStruct.ADC_Align = ADC_Align_Left;					//左对齐
 	ADC_InitStruct.ADC_Channel = ADC_Channel_1;
-	ADC_InitStruct.ADC_BGVoltage = ADC_BGVoltage_BG1v0;//BGS电压1.0v
+	ADC_InitStruct.ADC_BGVoltage = ADC_BGVoltage_BG1v2;//BGS电压1.2v
 	ADC_InitStruct.ADC_ReferencePositive = ADC_ReferencePositive_VDD;
 	// ADC_BGCRSetBGNC(ADC);// SET ADC_BGNC BIT
     
@@ -694,13 +708,7 @@ static void LCD_DISPLAY_UPDATE(void)
                 scaled = 1200;
             }
         } else {
-            scaled = (uint16_t)(g_volt.last_v * -100.0f);
-            g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_NEG;
-            if (g_volt.last_v <= VOLT_MIN_V)
-            {
-                g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
-                scaled = 1200;
-            }
+            scaled = 0;
         }
         dotpos = 2;
         // 空闲变化率<10%的休眠判断
@@ -862,9 +870,6 @@ static void MeterADC_GPIO_Init(void)
     gi.GPIO_Pull = GPIO_Pull_NoPull;
     gi.GPIO_Pin  = GPIO_Pin_3;
     GPIO_Init(GPIOD, &gi);
-    // PD4改为开漏输出，节省一个三极管
-    gi.GPIO_Mode = GPIO_Mode_OutOD;
-    gi.GPIO_Pull = GPIO_Pull_NoPull;
     gi.GPIO_Pin  = GPIO_Pin_4;
     GPIO_Init(GPIOD, &gi);
 }
@@ -923,7 +928,11 @@ void BatteryTask_Update(void)
         LOGF("g_amp.iamp:%d\r\n", (int)(g_amp.iamp*1000.0f)); 
         break;
     case METER_MODE_OHM:
-        LOGF("g_ohm.rx_display:%d\r\n", (int)(g_ohm.rx_display*1000.0f)); 
+        LOGF("range:%d PA1:%d vin_mV:%d RX:%d\r\n",
+            (int)g_ohm.range,
+            (int)g_adc_pa1_raw,
+            (int)(g_ohm.vin * 1000.0f + 0.5f),
+            (int)(g_ohm.rx_display + 0.5f));
         break;
     default:
         break;
@@ -1005,49 +1014,29 @@ void VoltTask_Update(void)
     float v_raw = read_vin(METER_MODE_VOLT, AVG_N);
     // LOGF("ticks=%u v=%d idle=%d\r\n", s_ms_ticks,(int)(v_raw*1000.0f+0.5f),idle_last_ms);
 
-    // 对应换算公式是 ( vout - 0.9983 ) * 10000.0 / 379.2
     float dv = v_raw;
-    // ① 消抖
-    // if (fabsf(dv) < 0.027f)
-    // {
-    //     // 忽略微小的波动
-    //     dv = 0;
-    // }else if (dv >= 0.027f) {
-    //     // 正向误差
-    //     dv += 0.027f;
-    // } else {
-    //     // 反向误差
-    //     dv -= 0.027f;
-    // }
 
     // 减缓微小的波动
     float v_tmp = Volt_From_DV(dv);    // 真实输入（V，带正负号）
     // 正向零点漂移
     // v_tmp += VOLT_ZERO_OFFSET;
-#if 0
-    float vabs = fabsf(v_tmp);
-    // 门限电压，小于 0.04V 视为 0V。0.04~0.07V 则减半。其他情况做补偿
-    if (vabs <= 0.04f)
-        v_tmp = 0.f;
-    else if (vabs <= VOLT_ZERO_OFFSET) 
-        v_tmp *= 0.45f;
-    else {
-        // 正向零点漂移：重新测量正负电压的误差-12V -6V -0.1V +0.1V +6V +12V
-        vabs += VOLT_ZERO_OFFSET;
-        // ③ 正/反向线性误差模型扣除
-        // float e = _interp_err(vabs, 0, 0.04f, VOLT_MAX_V);
-        // if (v_tmp >= 0.0f) {
-        //     // 正向误差
-        //     vabs += e;
-        // } else {
-        //     // 反向误差
-        //     vabs -= e;
-        // }
-        v_tmp = v_tmp >= 0.0f ? vabs : -vabs;
+    
+    // 实测线性标定
+    float v_corrected = v_tmp * VOLT_CAL_GAIN + VOLT_CAL_OFFSET_V;
+    // 本版本只支持正向测量
+    // 开路残留约0.10V，低于门限直接归零
+    if (v_corrected < VOLT_ZERO_DEADBAND_V)
+    {
+        v_corrected = 0.0f;
     }
-#endif
 
-    g_volt.last_v = v_tmp;
+    // 上限钳位，防止异常数据
+    if (v_corrected > VOLT_MAX_V)
+    {
+        v_corrected = VOLT_MAX_V;
+    }
+
+    g_volt.last_v = v_corrected;
 }
 #pragma endregion
 
@@ -1115,58 +1104,72 @@ void AmpTask_Update2(void)
 #pragma endregion
 
 #pragma region 欧姆表业务逻辑
-static inline float compute_rx_with_shunt(float vin, float Rs)
+static float read_ohm_vin(uint16_t *raw_out, int n)
 {
-    const float Rg = R_GS_SHUNT_RAW;
+    uint32_t acc = 0;
 
-    if (vin <= 0.0f) {
+    for (int i = 0; i < n; ++i)
+    {
+        ADC_ScanOnce();
+        acc += g_adc_pa1_raw;
+    }
+
+    uint16_t raw = (uint16_t)(acc / (uint32_t)n);
+
+    if (raw_out != NULL)
+    {
+        *raw_out = raw;
+    }
+
+    return ADC_TO_V(raw);
+}
+// Rx = 51 × ADC / (4029 - ADC)
+static inline float compute_rx_ohm(uint16_t raw)
+{
+    // 极低ADC认为短路
+    if (raw < 250U)
+    {
         return 0.0f;
     }
 
-    /*
-     * Rx = Rg * Rs * V /
-     *      [Rg * (Vs - V) - Rs * V]
-     */
-    float den =
-        Rg * (OHM_SUPPLY_V - vin)
-        - Rs * vin;
-
-    /*
-     * 分母<=0表示已经达到或超过本档开路电压。
-     * 此时Rx趋近无穷大。
-     */
-    if (den <= 0.0f) {
+    // 接近本档开路，交给kΩ档
+    if (raw >= 3950U)
+    {
         return OHM_OPEN_VALUE;
     }
 
-    float rx = Rg * Rs * vin / den;
+    float rx = 51.0f * raw / (4029.0f - raw);
 
-    if (rx > OHM_OPEN_VALUE) {
-        rx = OHM_OPEN_VALUE;
+    // 低阻端实测修正：5Ω和10Ω
+    if (rx < 30.0f)
+    {
+        rx = rx * 0.263f + 3.68f;
     }
 
     return rx;
 }
-static inline float compute_rx_ohm(float vin)
+// ADC 120  → 510Ω
+// ADC 2014 → 51kΩ
+static inline float compute_rx_kohm(uint16_t raw)
 {
-    float rx = compute_rx_with_shunt(vin, RS_OHM_RAW);
-
-    // 低阻档负责短路判断
-    if (rx < 4.0f) {
-        return 0.0f;
+    if (raw >= 2390U)
+    {
+        return OHM_OPEN_VALUE;
     }
 
-    return rx;
+    return 9673.0f * raw / (2396.0f - raw);
 }
 
-static inline float compute_rx_kohm(float vin)
+static inline float compute_rx_mohm(uint16_t raw)
 {
-    return compute_rx_with_shunt(vin, RS_KOHM_RAW);
-}
+    // 实测开路ADC约3633，而公式渐近点约3508
+    // 超过3500直接认为开路
+    if (raw >= 3500U)
+    {
+        return OHM_OPEN_VALUE;
+    }
 
-static inline float compute_rx_mohm(float vin)
-{
-    return compute_rx_with_shunt(vin, RS_MOHM_RAW);
+    return 386000.0f * raw / (3508.0f - raw);
 }
 static void set_range_pins(ohm_range_t r)
 {
@@ -1207,18 +1210,20 @@ void OhmTask_Init(void)
     g_lcd_buf.last_update_ms = g_volt.next_ms + VOLT_SAMPLE_PERIOD_MS;
 }
 // 根据档位自动计算电阻值 
-static inline float compute_rx_by_range(ohm_range_t range, float vin)
+static inline float compute_rx_by_range(
+    ohm_range_t range,
+    uint16_t raw)
 {
     switch (range)
     {
         case RANGE_OHM:
-            return compute_rx_ohm(vin);
+            return compute_rx_ohm(raw);
 
         case RANGE_KOHM:
-            return compute_rx_kohm(vin);
+            return compute_rx_kohm(raw);
 
         case RANGE_MOHM:
-            return compute_rx_mohm(vin);
+            return compute_rx_mohm(raw);
 
         default:
             return 0.0f;
@@ -1239,9 +1244,12 @@ void OhmTask_Update(void)
             g_ohm.range = RANGE_KOHM;
             set_range_pins(g_ohm.range);
         }
-        g_ohm.vin = read_vin(METER_MODE_OHM, AVG_N);
-        // kΩ档 测量 510Ω 0.084 切Ω档
-        if (g_ohm.vin<0.09f)
+        // 用这个公式的话就是锁死 3V 参考电压去换算
+        g_ohm.vin = read_ohm_vin(&g_ohm.raw, AVG_N);
+#if 0
+        // 这里也可以用 ADC 原始值来判断，vin 参考电压3V受5M分压影响可能是2.97V
+        // kΩ档 测量 510Ω ADC=116 换算电压大约0.085 切Ω档
+        if (g_ohm.vin<0.1f)
         {
             g_ohm.range = RANGE_OHM;
             set_range_pins(g_ohm.range);
@@ -1249,24 +1257,37 @@ void OhmTask_Update(void)
             // g_ohm.rx_display = 500;//保留值
             g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
         }
-        // kΩ档 测量 51kΩ以上的电阻大约1.494V 切MΩ档
-        else if (g_ohm.vin>1.48f)
+        // kΩ档 测量 51kΩ以上的电阻 ADC=2010 大约1.475V 切MΩ档
+        else if (g_ohm.vin>1.46f)
         {
             g_ohm.range = RANGE_MOHM;
             set_range_pins(g_ohm.range);
         }
         // 测量完成 切到测量状态
         g_ohm.st = OHM_S_MEASURE;
-
-    } else {
-        g_ohm.vin = read_vin(METER_MODE_OHM, AVG_N);
-
-        // 计算 Rx（原始）
-        float Rs = (g_ohm.range == RANGE_OHM)  ? RS_OHM_RAW :
-                (g_ohm.range == RANGE_KOHM) ? RS_KOHM_RAW : RS_MOHM_RAW;
-        float rx_raw = compute_rx_by_range(g_ohm.range, g_ohm.vin);
+#endif
         
-        float rx = rx_raw;
+        if (g_ohm.raw < KOHM_TO_OHM_RAW)
+        {
+            g_ohm.range = RANGE_OHM;
+            set_range_pins(g_ohm.range);
+            g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
+        }
+        else if (g_ohm.raw > KOHM_TO_MOHM_RAW)
+        {
+            g_ohm.range = RANGE_MOHM;
+            set_range_pins(g_ohm.range);
+            g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
+        }
+
+        g_ohm.st = OHM_S_MEASURE;
+        
+    } else {
+        g_ohm.vin = read_ohm_vin(&g_ohm.raw, AVG_N);//read_vin(METER_MODE_OHM, AVG_N);
+
+        float rx = compute_rx_by_range(
+            g_ohm.range,
+            g_ohm.raw);
 
         // ===== 分档校准 =====
         // if (g_ohm.range == RANGE_OHM) {
@@ -1282,37 +1303,45 @@ void OhmTask_Update(void)
         //     }
         // }
         
-        // 超出测量范围 时回去选档
         switch (g_ohm.range)
         {
-        case RANGE_OHM:
-            if (rx > 510.0f) {
-                g_ohm.st = OHM_S_SELECT_RANGE;
-                // 重置LCD刷新的计时器，防止换挡时刷新屏时报警
-                // g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
-            }
-            break;
-        case RANGE_KOHM:
-            if (rx < 510.0f || rx > 51000.0f) {
-                g_ohm.st = OHM_S_SELECT_RANGE;
-            }
-            break;
-        case RANGE_MOHM:
-            if (rx < 51000.0f) {
-                g_ohm.st = OHM_S_SELECT_RANGE;
-            }
-            break;
-        default:
-            break;
+            case RANGE_OHM:
+                // 510Ω实测ADC约3669，超过3700重新选档
+                if (g_ohm.raw > OHM_TO_SELECT_RAW)
+                {
+                    g_ohm.st = OHM_S_SELECT_RANGE;
+                }
+                break;
+
+            case RANGE_KOHM:
+                if (g_ohm.raw < KOHM_TO_OHM_RAW ||
+                    g_ohm.raw > KOHM_TO_MOHM_RAW)
+                {
+                    g_ohm.st = OHM_S_SELECT_RANGE;
+                }
+                break;
+
+            case RANGE_MOHM:
+                // 51kΩ在M档约ADC420
+                // 低于400说明应回kΩ档重新判断
+                if (g_ohm.raw < MOHM_TO_SELECT_RAW)
+                {
+                    g_ohm.st = OHM_S_SELECT_RANGE;
+                }
+                break;
+
+            default:
+                break;
         }
 
         if (g_ohm.st == OHM_S_SELECT_RANGE)
         {
-            // 重置LCD刷新的计时器，防止换挡时刷新屏时报警
             g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
         }
-
-        g_ohm.rx_display = rx;
+        else
+        {
+            g_ohm.rx_display = rx;
+        }
     }
 }
 
@@ -1326,10 +1355,14 @@ void MultimeterInit()
     MeterADC_GPIO_Init();
     ADC_Driver();
     
+    // 关闭欧姆档换挡的三个 mos 管
+    OhmCtrl_GPIO_Init();
+    Ohm_AllOff();
     if (!hadSetMultiMeterMode)
     {
         // 若未初始化，设置为默认电压表
         LOGS("Meter IO Init\r\n");
+
         meter_mode = METER_MODE_VOLT;   // 默认电压表
         hadSetMultiMeterMode = true;
     }
@@ -1364,9 +1397,9 @@ static void SwitchMeterMode(meter_mode_t new_mode)
         case METER_MODE_VOLT:
             // 先关闭欧姆相关硬件，避免串扰
             Ohm_AllOff();
-            // PD3 高 PD4 开漏输出高
+            // PD3 高 PD4 低
             GPIO_SetBits(GPIOD, GPIO_Pin_3);
-            GPIO_SetBits(GPIOD, GPIO_Pin_4);
+            GPIO_ResetBits(GPIOD, GPIO_Pin_4);
             VoltTask_Init();
             break;
         case METER_MODE_AMP:
@@ -1375,17 +1408,17 @@ static void SwitchMeterMode(meter_mode_t new_mode)
             AmpTask_Init();
             break;
         case METER_MODE_OHM:
-            // 欧姆表 PD3 低 PD4 开漏输出低
+            // 欧姆表 PD3 低 PD4 高
             GPIO_ResetBits(GPIOD, GPIO_Pin_3);
-            GPIO_ResetBits(GPIOD, GPIO_Pin_4);
+            GPIO_SetBits(GPIOD, GPIO_Pin_4);
             OhmTask_Init();
             break;
     }
 
     // 短按提示音
-    PWM_Cmd(TIM1, ENABLE);
-    delay_ms(25);
-    PWM_Cmd(TIM1, DISABLE);
+    // PWM_Cmd(TIM1, ENABLE);
+    // delay_ms(25);
+    // PWM_Cmd(TIM1, DISABLE);
 }
 #pragma endregion
 
@@ -1481,12 +1514,12 @@ int main (void)
         //     (int)(i_calc * 1000.0f + 0.5f));
 
         // 测试欧姆表
-        g_ohm.vin = read_vin(METER_MODE_OHM,AVG_N);
-        float rx = RS_OHM_RAW * g_ohm.vin / (3.0f - g_ohm.vin);
-        LOGF("OHM_PA1_raw:%d, OHM_mV:%d, RX:%d\r\n",
-            (int)g_adc_pa1_raw,
-            (int)(g_ohm.vin * 1000.0f + 0.5f),
-            (int)(rx + 0.5f));//OK
+        // g_ohm.vin = read_vin(METER_MODE_OHM,AVG_N);
+        // float rx = compute_rx_by_range(g_ohm.range, g_ohm.vin);
+        // LOGF("OHM_PA1_raw:%d, OHM_mV:%d, RX:%d\r\n",
+        //     (int)g_adc_pa1_raw,
+        //     (int)(g_ohm.vin * 1000.0f + 0.5f),
+        //     (int)(rx + 0.5f));//OK
 
         // OhmTask_Update();
 
@@ -1553,7 +1586,7 @@ int main (void)
                 break;
             }
             BatteryTask_Update();     // ★ 每秒打印一次电池电量
-            LCD_DISPLAY_UPDATE();
+            // LCD_DISPLAY_UPDATE();
             if (poweroff_request && !g_require_release_before_poweroff)//要求长按松手后才关机
             {
                 LOGS("wait to poweroff");
