@@ -130,12 +130,15 @@ static meter_mode_t meter_mode = METER_MODE_VOLT;
 #define KOHM_TO_MOHM_TH_V       1.80f   // kΩ档高于此值，认为高阻/开路
 // 电阻表档位
 typedef enum { RANGE_OHM = 0, RANGE_KOHM, RANGE_MOHM } ohm_range_t;
-// kΩ档选档阈值
-#define KOHM_TO_OHM_RAW        120U
-#define KOHM_TO_MOHM_RAW      2014U
+// 千欧档自动选档阈值：基于5.1kΩ参考电阻重新实测
+// 使用kΩ档进行总选档
+#define KOHM_TO_OHM_RAW        430U
+#define KOHM_TO_MOHM_RAW      3600U
 
-// 各档退出阈值，稍微增加回差
+// Ω档测量超过上限，返回重新选档
 #define OHM_TO_SELECT_RAW      3700U
+
+// MΩ档测量低于下限，返回重新选档
 #define MOHM_TO_SELECT_RAW      400U
 
 // LCD 显示配置
@@ -928,9 +931,9 @@ void BatteryTask_Update(void)
         LOGF("g_amp.iamp:%d\r\n", (int)(g_amp.iamp*1000.0f)); 
         break;
     case METER_MODE_OHM:
-        LOGF("range:%d PA1:%d vin_mV:%d RX:%d\r\n",
+        LOGF("range:%d raw:%d vin_mV:%d RX:%d\r\n",
             (int)g_ohm.range,
-            (int)g_adc_pa1_raw,
+            (int)g_ohm.raw,
             (int)(g_ohm.vin * 1000.0f + 0.5f),
             (int)(g_ohm.rx_display + 0.5f));
         break;
@@ -1126,13 +1129,12 @@ static float read_ohm_vin(uint16_t *raw_out, int n)
 // Rx = 51 × ADC / (4029 - ADC)
 static inline float compute_rx_ohm(uint16_t raw)
 {
-    // 极低ADC认为短路
+    // 实测短路 raw约206
     if (raw < 250U)
     {
         return 0.0f;
     }
 
-    // 接近本档开路，交给kΩ档
     if (raw >= 3950U)
     {
         return OHM_OPEN_VALUE;
@@ -1140,49 +1142,62 @@ static inline float compute_rx_ohm(uint16_t raw)
 
     float rx = 51.0f * raw / (4029.0f - raw);
 
-    // 低阻端实测修正：5Ω和10Ω
+    // 10Ω附近单独修正
     if (rx < 30.0f)
     {
-        rx = rx * 0.263f + 3.68f;
+        rx = rx * 0.290f + 3.68f;
+    }
+    else
+    {
+        // 50～500Ω目前整体偏高约3%～6%
+        rx *= 0.965f;
     }
 
     return rx;
 }
-// ADC 120  → 510Ω
-// ADC 2014 → 51kΩ
 static inline float compute_rx_kohm(uint16_t raw)
 {
-    if (raw >= 2390U)
+    if (raw >= 4000U)
     {
         return OHM_OPEN_VALUE;
     }
 
-    return 9673.0f * raw / (2396.0f - raw);
+    if (raw <= 37U)
+    {
+        return 0.0f;
+    }
+
+    return 5086.3f * ((float)raw - 37.2f)
+         / (4029.0f - (float)raw);
 }
 
 static inline float compute_rx_mohm(uint16_t raw)
 {
-    // 实测开路ADC约3633，而公式渐近点约3508
-    // 超过3500直接认为开路
     if (raw >= 3500U)
     {
         return OHM_OPEN_VALUE;
     }
 
-    return 386000.0f * raw / (3508.0f - raw);
+    if (raw <= 55U)
+    {
+        return 0.0f;
+    }
+
+    return 454700.0f * ((float)raw - 55.0f)
+         / (3686.0f - (float)raw);
 }
 static void set_range_pins(ohm_range_t r)
 {
     switch (r)
     {
         case RANGE_OHM:
-            GPIO_ResetBits(GPIOA, GPIO_Pin_2); // Ω档导通 此时是 51 和 510k 并联 51Ω
+            GPIO_ResetBits(GPIOA, GPIO_Pin_2); // Ω档导通 此时是 51
             GPIO_SetBits(GPIOA, GPIO_Pin_3);
             GPIO_SetBits(GPIOB, GPIO_Pin_1);
             break;
         case RANGE_KOHM:
             GPIO_SetBits(GPIOA, GPIO_Pin_2);
-            GPIO_ResetBits(GPIOA, GPIO_Pin_3); // kΩ档导通 此时是5.1k 和 510k 并联 5.05kΩ
+            GPIO_ResetBits(GPIOA, GPIO_Pin_3); // kΩ档导通 此时是 5.1k
             GPIO_SetBits(GPIOB, GPIO_Pin_1);
             break;
         case RANGE_MOHM:
@@ -1514,12 +1529,10 @@ int main (void)
         //     (int)(i_calc * 1000.0f + 0.5f));
 
         // 测试欧姆表
-        // g_ohm.vin = read_vin(METER_MODE_OHM,AVG_N);
-        // float rx = compute_rx_by_range(g_ohm.range, g_ohm.vin);
-        // LOGF("OHM_PA1_raw:%d, OHM_mV:%d, RX:%d\r\n",
-        //     (int)g_adc_pa1_raw,
-        //     (int)(g_ohm.vin * 1000.0f + 0.5f),
-        //     (int)(rx + 0.5f));//OK
+        g_ohm.vin = read_vin(METER_MODE_OHM,AVG_N);
+        LOGF("OHM_PA1_raw:%d, OHM_mV:%d, RX:%d\r\n",
+            (int)g_adc_pa1_raw,
+            (int)(g_ohm.vin * 1000.0f + 0.5f));//OK
 
         // OhmTask_Update();
 
