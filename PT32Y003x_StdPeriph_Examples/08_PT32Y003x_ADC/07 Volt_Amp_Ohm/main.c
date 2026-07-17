@@ -106,6 +106,12 @@ static meter_mode_t meter_mode = METER_MODE_VOLT;
 // mA 档上限（=28mA）
 #define I_MA_MAX         0.28f
 #define ZERO_BAND_V       0.0040f   // 零点死区：|ΔV|<4mV 视为0V
+// 误差校正参数
+#define AMP_ZERO_DEADBAND_A   0.010f
+#define AMP_CAL_GAIN       0.9765f
+#define AMP_CAL_OFFSET_A  (-0.00535f)
+// 开路模拟输出饱和阈值
+#define AMP_OPEN_RAW_TH 6000U
 
 // 欧姆表配置
 #define OHM_SUPPLY_V       3.0f  // 欧姆表上端电压3V
@@ -920,7 +926,7 @@ void BatteryTask_Update(void)
 
     g_batt.level = lvl;
 
-    LOGF("PA1_raw:%d meter_mode:%d\r\n",(int)g_adc_pa1_raw, meter_mode);
+    LOGF("PA1_raw:%d PD2_raw:%d meter_mode:%d\r\n",(int)g_adc_pa1_raw, (int)g_adc_pd2_raw, meter_mode);
 
     switch (meter_mode)
     {
@@ -1051,6 +1057,25 @@ void AmpTask_Init(void)
     g_volt.next_ms = s_ms_ticks;
     LOGS("Amp init\r\n");
 }
+static float read_amp_vin(uint16_t *raw_out, int n)
+{
+    uint32_t acc = 0;
+
+    for (int i = 0; i < n; ++i)
+    {
+        ADC_ScanOnce();
+        acc += g_adc_pd2_raw;
+    }
+
+    uint16_t raw = (uint16_t)(acc / (uint32_t)n);
+
+    if (raw_out != NULL)
+    {
+        *raw_out = raw;
+    }
+
+    return ADC_TO_V(raw);
+}
 static inline float current_compensate(float i_meas)
 {
     float i = i_meas;
@@ -1085,24 +1110,58 @@ static inline float current_compensate(float i_meas)
     return i;
 }
 
-void AmpTask_Update2(void)
+static void AmpTask_Update2(void)
 {
     uint32_t now = s_ms_ticks;
-    if ((int32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS) return;
+
+    if ((int32_t)(now - g_volt.next_ms) < VOLT_SAMPLE_PERIOD_MS)
+    {
+        return;
+    }
+
     g_volt.next_ms = now;
 
-    g_amp.vin  = read_vin(METER_MODE_AMP, AVG_N);
+    // g_amp.vin = read_vin(METER_MODE_AMP, AVG_N);
 
-    float dv = g_amp.vin;
-    // g_amp.iamp = dv * 2.5f;   // TODO: 电流表计算，先用 2.5 A/V, 后续需要实际测试
-    // g_amp.iamp = current_compensate(g_amp.iamp);
-    g_amp.iamp = dv / (0.1f * 10.1f);// 根据0.1Ω采样电阻计算电流
-    if (g_amp.iamp >= I_FULLSCALE_A) {
-        g_amp.iamp = I_FULLSCALE_A;
-    }
-    // else if (g_amp.iamp <= -I_FULLSCALE_A) {
-    //     g_amp.iamp = -I_FULLSCALE_A;
+    // /*
+    //  * 电流输入开路时，PD2实测会饱和到8190～8191。
+    //  * 正常3A预计raw约4260，因此超过6000判为开路。
+    //  */
+    // if (g_adc_pd2_raw >= AMP_OPEN_RAW_TH)
+    // {
+    //     g_amp.iamp = 0.0f;
+    //     return;
     // }
+    // 用read_amp_vin去读电压顺便保存ADC值，方便判断开路
+    uint16_t amp_raw = 0;
+    g_amp.vin = read_amp_vin(&amp_raw, AVG_N);
+
+    // 开路时实测8190～8191
+    if (amp_raw >= 6000U)
+    {
+        g_amp.iamp = 0.0f;
+        return;
+    }
+
+    // 理论计算：0.1Ω采样电阻，放大倍数约10.1
+    float i_raw = g_amp.vin / (0.1f * 10.1f);
+
+    // 实测线性校准，根据207mA～2005mA实测数据校准
+    float i_corrected =
+        i_raw * AMP_CAL_GAIN + AMP_CAL_OFFSET_A;
+
+    // 小电流及负值归零，单向正电流测量，低于零点死区统一显示0
+    if (i_corrected < AMP_ZERO_DEADBAND_A)
+    {
+        i_corrected = 0.0f;
+    }
+    // 满量程限制，防止异常数据
+    if (i_corrected > I_FULLSCALE_A)
+    {
+        i_corrected = I_FULLSCALE_A;
+    }
+
+    g_amp.iamp = i_corrected;
 }
 #pragma endregion
 
@@ -1419,7 +1478,7 @@ static void SwitchMeterMode(meter_mode_t new_mode)
             break;
         case METER_MODE_AMP:
             GPIO_SetBits(GPIOD, GPIO_Pin_3);
-            GPIO_SetBits(GPIOD, GPIO_Pin_4);
+            GPIO_ResetBits(GPIOD, GPIO_Pin_4);
             AmpTask_Init();
             break;
         case METER_MODE_OHM:
