@@ -7,7 +7,7 @@
 // LEDDisplay_SetDigit(3, 0x66); // 显示4
 // LEDDisplay_SetDigit(4, 0x01); // 显示"V"（例如自定义）
 // 严谨一点可以写成只读的常量，写成变量传参给函数编译时不会报格式转换的警告
-// 段码定义（共阳，1点亮）
+// 段码定义（5位共阳，1点亮）
 GPIO_TypeDef * COM_PORT_ARRAY[] = {GPIOD, GPIOB, GPIOB, GPIOB, GPIOC};
 uint16_t COM_PIN_ARRAY[] = {GPIO_Pin_4, GPIO_Pin_1, GPIO_Pin_5, GPIO_Pin_4, GPIO_Pin_7};
 GPIO_TypeDef * SEG_PORT_ARRAY[] = {GPIOC, GPIOC, GPIOC, GPIOC, GPIOD, GPIOD, GPIOD};

@@ -1,6 +1,6 @@
 #include "PT32Y003x.h"
 #include <stdbool.h>
-#include "ledDisplay.h"
+// #include "ledDisplay.h"
 #include "delay.h"
 #include "lcd_ht1621b.h"
 #include <PT32Y003x_gpio.h>
@@ -112,6 +112,9 @@ static meter_mode_t meter_mode = METER_MODE_VOLT;
 #define AMP_CAL_OFFSET_A  (-0.00535f)
 // 开路模拟输出饱和阈值
 #define AMP_OPEN_RAW_TH 6000U
+// 正常电流上升到约2.9A后，PD2 ADC进入顶部饱和区
+// 饱和区统一按3A超量程显示
+#define AMP_FULLSCALE_RAW_TH   4050U
 
 // 欧姆表配置
 #define OHM_SUPPLY_V       3.0f  // 欧姆表上端电压3V
@@ -139,13 +142,16 @@ typedef enum { RANGE_OHM = 0, RANGE_KOHM, RANGE_MOHM } ohm_range_t;
 // 千欧档自动选档阈值：基于5.1kΩ参考电阻重新实测
 // 使用kΩ档进行总选档
 #define KOHM_TO_OHM_RAW        430U
-#define KOHM_TO_MOHM_RAW      3600U
+#define KOHM_TO_MOHM_RAW      3850U
 
 // Ω档测量超过上限，返回重新选档
 #define OHM_TO_SELECT_RAW      3700U
 
 // MΩ档测量低于下限，返回重新选档
-#define MOHM_TO_SELECT_RAW      400U
+#define MOHM_TO_SELECT_RAW      600U
+// MΩ档换挡引脚
+#define MOHM_SEL_PIN_PORT           GPIOD
+#define MOHM_SEL_PIN_NUM            GPIO_Pin_6
 
 // LCD 显示配置
 #define LCD_UPDATE_MS         600U
@@ -301,13 +307,13 @@ void UART_GPIO_Config(void)
 	/* 配置UART管脚的复用功能 */
     if (LOG_UART==UART1)
     {
-        GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_1, AFIO_AF_1,ENABLE);	//PB1 TX1
-        GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_1, AFIO_AF_1,ENABLE);	//PD1 RX1
+        // GPIO_DigitalRemapConfig(AFIOB, GPIO_Pin_1, AFIO_AF_1,ENABLE);	//PB1 TX1
+        // GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_1, AFIO_AF_1,ENABLE);	//PD1 RX1
     }
     else
     {
         GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_5, AFIO_AF_0,ENABLE);	//PD5 TX0
-        GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_6, AFIO_AF_0,ENABLE);	//PD6 RX0
+        // GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_6, AFIO_AF_0,ENABLE);	//PD6 RX0 会影响PA1！详情就见文档
     }
 
 }
@@ -617,9 +623,9 @@ static void OhmCtrl_GPIO_Init(void)
     gi.GPIO_Pin  = GPIO_Pin_3;
     GPIO_Init(GPIOA, &gi);
 
-    // PB1 控制 MΩ档
-    gi.GPIO_Pin  = GPIO_Pin_1;
-    GPIO_Init(GPIOB, &gi);
+    // 控制 MΩ档
+    gi.GPIO_Pin  = MOHM_SEL_PIN_NUM;
+    GPIO_Init(MOHM_SEL_PIN_PORT, &gi);
 }
 
 static void Ohm_AllOff(void)
@@ -627,7 +633,7 @@ static void Ohm_AllOff(void)
     // 高电平，关断所有 P-MOS
     GPIO_SetBits(GPIOA, GPIO_Pin_2);
     GPIO_SetBits(GPIOA, GPIO_Pin_3);
-    GPIO_SetBits(GPIOB, GPIO_Pin_1);
+    GPIO_SetBits(MOHM_SEL_PIN_PORT, MOHM_SEL_PIN_NUM);
 }
 
 #pragma endregion
@@ -737,12 +743,12 @@ static void LCD_DISPLAY_UPDATE(void)
                 i=-i;
             }
             // 显示 1.xxx A
-            if (i > 0.999f)
+            if (i >= 1.0f)
             {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_A<<4;
                 dotpos = 1;
-                // 由于零点漂移，实际上到不了3A，只能的到2.8A
-                if (i >= 2.94f){
+                // 之前由于零点漂移，实际上到不了3A，只能的到2.8A 2.94f 现在可以到3A
+                if (i >= I_FULLSCALE_A){
                     // 显示溢出
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
                     i = I_FULLSCALE_A;
@@ -881,6 +887,26 @@ static void MeterADC_GPIO_Init(void)
     GPIO_Init(GPIOD, &gi);
     gi.GPIO_Pin  = GPIO_Pin_4;
     GPIO_Init(GPIOD, &gi);
+
+    // 关闭模拟功能
+    GPIO_AnalogRemapConfig(AFIOD, GPIO_Pin_3, DISABLE);
+    GPIO_AnalogRemapConfig(AFIOD, GPIO_Pin_4, DISABLE);
+
+    // 关闭数字外设复用
+    GPIO_DigitalRemapConfig(
+        AFIOD,
+        GPIO_Pin_3,
+        AFIO_AF_None,
+        DISABLE
+    );
+
+    GPIO_DigitalRemapConfig(
+        AFIOD,
+        GPIO_Pin_4,
+        AFIO_AF_None,
+        DISABLE
+    );
+
 }
 
 #pragma endregion
@@ -1121,6 +1147,7 @@ static void AmpTask_Update2(void)
 
     g_volt.next_ms = now;
 
+    // 旧版代码
     // g_amp.vin = read_vin(METER_MODE_AMP, AVG_N);
 
     // /*
@@ -1132,14 +1159,23 @@ static void AmpTask_Update2(void)
     //     g_amp.iamp = 0.0f;
     //     return;
     // }
+
     // 用read_amp_vin去读电压顺便保存ADC值，方便判断开路
     uint16_t amp_raw = 0;
     g_amp.vin = read_amp_vin(&amp_raw, AVG_N);
 
-    // 开路时实测8190～8191
-    if (amp_raw >= 6000U)
+    // 开路时实测8190～8191 此时显示电流为零
+    if (amp_raw >= AMP_OPEN_RAW_TH)
     {
         g_amp.iamp = 0.0f;
+        return;
+    }
+
+    // 实际电流达到约2.9A后，ADC停留在4050～4090
+    // 统一按3A超量程处理
+    if (amp_raw >= AMP_FULLSCALE_RAW_TH)
+    {
+        g_amp.iamp = I_FULLSCALE_A;
         return;
     }
 
@@ -1252,17 +1288,17 @@ static void set_range_pins(ohm_range_t r)
         case RANGE_OHM:
             GPIO_ResetBits(GPIOA, GPIO_Pin_2); // Ω档导通 此时是 51
             GPIO_SetBits(GPIOA, GPIO_Pin_3);
-            GPIO_SetBits(GPIOB, GPIO_Pin_1);
+            GPIO_SetBits(MOHM_SEL_PIN_PORT, MOHM_SEL_PIN_NUM);
             break;
         case RANGE_KOHM:
             GPIO_SetBits(GPIOA, GPIO_Pin_2);
             GPIO_ResetBits(GPIOA, GPIO_Pin_3); // kΩ档导通 此时是 5.1k
-            GPIO_SetBits(GPIOB, GPIO_Pin_1);
+            GPIO_SetBits(MOHM_SEL_PIN_PORT, MOHM_SEL_PIN_NUM);
             break;
         case RANGE_MOHM:
             GPIO_SetBits(GPIOA, GPIO_Pin_2);
             GPIO_SetBits(GPIOA, GPIO_Pin_3);
-            GPIO_ResetBits(GPIOB, GPIO_Pin_1);// MΩ档 此时是 510k
+            GPIO_ResetBits(MOHM_SEL_PIN_PORT, MOHM_SEL_PIN_NUM);// 510k
             break;
     }
 }
@@ -1275,10 +1311,12 @@ void OhmTask_Init(void)
 
     OhmCtrl_GPIO_Init();
     
-    g_ohm.range = RANGE_KOHM;
+    g_ohm.range = RANGE_MOHM;
     g_ohm.st = OHM_S_SELECT_RANGE;   // ← 补上这行
     set_range_pins(g_ohm.range);
-    LOGS("Ohm init kΩ\r\n");
+    LOGS("Ohm init MΩ\r\n");
+    // 测试代码：锁定在k欧档测试一下510和51k
+    g_ohm.st = OHM_S_MEASURE;
 
     // 重置LCD刷新的计时器，防止初始化时刷新屏幕
     g_lcd_buf.last_update_ms = g_volt.next_ms + VOLT_SAMPLE_PERIOD_MS;
@@ -1312,7 +1350,7 @@ void OhmTask_Update(void)
     g_volt.next_ms = now;
 
     // 档位选择
-    if (g_ohm.st == OHM_S_SELECT_RANGE) {
+    if (g_ohm.st == OHM_S_SELECT_RANGE && false) {
         if (g_ohm.range != RANGE_KOHM)
         {
             g_ohm.range = RANGE_KOHM;
@@ -1359,54 +1397,38 @@ void OhmTask_Update(void)
     } else {
         g_ohm.vin = read_ohm_vin(&g_ohm.raw, AVG_N);//read_vin(METER_MODE_OHM, AVG_N);
 
-        float rx = compute_rx_by_range(
-            g_ohm.range,
-            g_ohm.raw);
+        float rx = compute_rx_by_range(g_ohm.range, g_ohm.raw);
+        // M欧档退回千欧档、欧姆档切到千欧档、千欧档切到兆欧和欧姆档的逻辑
+        // switch (g_ohm.range)
+        // {
+        //     case RANGE_OHM:
+        //         // 510Ω实测ADC约3669，超过3700重新选档
+        //         if (g_ohm.raw > OHM_TO_SELECT_RAW)
+        //         {
+        //             g_ohm.st = OHM_S_SELECT_RANGE;
+        //         }
+        //         break;
 
-        // ===== 分档校准 =====
-        // if (g_ohm.range == RANGE_OHM) {
-        //     rx = rx * GAIN_OHM + OFFS_OHM;
-        // } else if (g_ohm.range == RANGE_KOHM) {
-        //     rx = rx * GAIN_KOHM + OFFS_KOHM;
-        // } else {
-        //     // MΩ 档按区间分段
-        //     if (rx_raw <= MOHM_SPLIT_OHMS) {
-        //         rx = rx_raw * GAIN_MOHM_LOW  + OFFS_MOHM_LOW;
-        //     } else {
-        //         rx = rx_raw * GAIN_MOHM_HIGH + OFFS_MOHM_HIGH;
-        //     }
+        //     case RANGE_KOHM:
+        //         if (g_ohm.raw < KOHM_TO_OHM_RAW ||
+        //             g_ohm.raw > KOHM_TO_MOHM_RAW)
+        //         {
+        //             g_ohm.st = OHM_S_SELECT_RANGE;
+        //         }
+        //         break;
+
+        //     case RANGE_MOHM:
+        //         // 51kΩ在M档约ADC420
+        //         // 低于300说明应回kΩ档重新判断
+        //         if (g_ohm.raw < MOHM_TO_SELECT_RAW)
+        //         {
+        //             g_ohm.st = OHM_S_SELECT_RANGE;
+        //         }
+        //         break;
+
+        //     default:
+        //         break;
         // }
-        
-        switch (g_ohm.range)
-        {
-            case RANGE_OHM:
-                // 510Ω实测ADC约3669，超过3700重新选档
-                if (g_ohm.raw > OHM_TO_SELECT_RAW)
-                {
-                    g_ohm.st = OHM_S_SELECT_RANGE;
-                }
-                break;
-
-            case RANGE_KOHM:
-                if (g_ohm.raw < KOHM_TO_OHM_RAW ||
-                    g_ohm.raw > KOHM_TO_MOHM_RAW)
-                {
-                    g_ohm.st = OHM_S_SELECT_RANGE;
-                }
-                break;
-
-            case RANGE_MOHM:
-                // 51kΩ在M档约ADC420
-                // 低于400说明应回kΩ档重新判断
-                if (g_ohm.raw < MOHM_TO_SELECT_RAW)
-                {
-                    g_ohm.st = OHM_S_SELECT_RANGE;
-                }
-                break;
-
-            default:
-                break;
-        }
 
         if (g_ohm.st == OHM_S_SELECT_RANGE)
         {
@@ -1444,6 +1466,7 @@ void MultimeterInit()
 	BuzzerInit();
 
     LCDInit();
+    //暂时忽略LCD
 
     // 唤醒/初始化后：复位空闲检测器 和 LCD显示缓冲区
     memset((void*)&g_idle, 0, sizeof(g_idle));
@@ -1552,14 +1575,59 @@ Vin = Vpa1 × 4.4
 int main (void)
 {
     first_init();
-#if ENABLE_LOG
-    // uart0_tx 串口日志 PD5 uart1_tx 串口日志 PB1
-    UART_Driver();
-    LOGS("UART Init");
-#endif
-    // 先测试 ADC 功能
+    
+    #if ENABLE_LOG
+        // uart0_tx 串口日志 PD5 uart1_tx 串口日志 PB1
+        UART_Driver();
+        LOGS("UART Init");
+    #endif
+    // 单独测试 IO 引脚
 #if 0
-    // 测试开机默认处于电压表
+    GPIO_InitTypeDef gi;
+
+    // PA2 控制 Ω档
+    gi.GPIO_Mode = GPIO_Mode_OutPP;
+    gi.GPIO_Pull = GPIO_Pull_NoPull;
+    gi.GPIO_Pin  = GPIO_Pin_2;
+    GPIO_Init(GPIOA, &gi);
+
+    // PA3 控制 kΩ档
+    gi.GPIO_Pin  = GPIO_Pin_3;
+    GPIO_Init(GPIOA, &gi);
+
+    // PB1 控制 MΩ档 // 改成PD6试一下
+    gi.GPIO_Pin  = GPIO_Pin_1;
+    GPIO_Init(GPIOB, &gi);
+
+    gi.GPIO_Pin  = GPIO_Pin_6;
+    GPIO_Init(GPIOD, &gi);
+
+    // 初始化 PD3 PD4 引脚，用于切换电压表、电流表、欧姆表
+    gi.GPIO_Pin  = GPIO_Pin_3;
+    GPIO_Init(GPIOD, &gi);
+    gi.GPIO_Pin  = GPIO_Pin_4;
+    GPIO_Init(GPIOD, &gi);
+
+    GPIO_SetBits(GPIOA, GPIO_Pin_2);
+    GPIO_SetBits(GPIOA, GPIO_Pin_3);
+    GPIO_SetBits(GPIOB, GPIO_Pin_1);
+    GPIO_SetBits(GPIOD, GPIO_Pin_6);//改用 D6 控制换挡，换挡逻辑优化
+
+    GPIO_ResetBits(GPIOD, GPIO_Pin_3);
+    GPIO_SetBits(GPIOD, GPIO_Pin_4);
+
+    GPIO_SetBits(GPIOA, GPIO_Pin_2);
+    GPIO_SetBits(GPIOA, GPIO_Pin_3);
+    GPIO_ResetBits(GPIOB, GPIO_Pin_1);
+    GPIO_ResetBits(GPIOD, GPIO_Pin_6);//改用 D6 控制换挡，换挡逻辑优化
+    while (1)
+    {
+        /* code */
+    }
+#endif
+    
+#if 0
+    // 测试兆欧功能
     meter_mode = METER_MODE_OHM;   // 欧姆表
     hadSetMultiMeterMode = true;
     MultimeterInit();
@@ -1658,7 +1726,7 @@ int main (void)
                 break;
             }
             BatteryTask_Update();     // ★ 每秒打印一次电池电量
-            // LCD_DISPLAY_UPDATE();
+            LCD_DISPLAY_UPDATE();
             if (poweroff_request && !g_require_release_before_poweroff)//要求长按松手后才关机
             {
                 LOGS("wait to poweroff");
