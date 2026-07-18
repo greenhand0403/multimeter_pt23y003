@@ -185,6 +185,7 @@ void LCD_Show_digits(uint16_t scaled_2dp, uint8_t dot_pos)
     // if (d0 == 0) {
         // uint8_t z = 0x00;
         // HT1621_WriteData(ADDR_FIRST_L, &z, 1);
+        // LCD_ShowDigit(0, d0, false);
     // } else {
         LCD_ShowDigit(0, d0, dot_pos==1);
     // }

@@ -19,8 +19,8 @@
 #if ENABLE_LOG
 char log_buffer[64];  // 用于打印日志 足够存储格式化字符串
   #define LOG_UART UART0
-  #define LOGF(...) do{ sprintf(log_buffer, __VA_ARGS__); UART1_SendString(log_buffer); }while(0)
-  #define LOGS(s)   do{ UART1_SendString(s); }while(0)
+  #define LOGF(...) do{ sprintf(log_buffer, __VA_ARGS__); UART_SendString(log_buffer); }while(0)
+  #define LOGS(s)   do{ UART_SendString(s); }while(0)
 #else
   #define LOGF(...) do{}while(0)
   #define LOGS(s)   do{}while(0)
@@ -124,7 +124,7 @@ static meter_mode_t meter_mode = METER_MODE_VOLT;
 #define RS_OHM_RAW          51.0f     // 51Ω
 #define RS_KOHM_RAW         5100.0f     // 5.1kΩ
 #define RS_MOHM_RAW         510000.0f     // 510kΩ
-#define R_GS_SHUNT_RAW 5000000.0f  // 5MΩ 开路时的电阻
+#define R_GS_SHUNT_RAW     5000000.0f  // 5MΩ 开路时的电阻
 #define OHM_OPEN_VALUE     51000000.0f  // 超出量程，电阻太大，统一表示为51MΩ
 // ===== 欧姆表实测参数 =====
 // Ω档：短路零点约 0.20~0.29V，先按 0.30V 以下认为短路
@@ -282,7 +282,7 @@ static inline void Idle_OnDisplaySample(float v, uint32_t now_ms)
         }
     }
 }
-// 插值计算误差的函数，方便做误差补偿？
+// 电流插值计算误差的函数，方便做误差补偿？
 static inline float _interp_err(float iabs, float e0, float efs, float ifs) {
     // 线性插值：e(i) = e0 + (efs - e0) * (i/ifs), 0<=i<=ifs
     if (iabs < 0.0f) iabs = 0.0f;
@@ -312,8 +312,8 @@ void UART_GPIO_Config(void)
     }
     else
     {
-        GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_5, AFIO_AF_0,ENABLE);	//PD5 TX0
-        // GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_6, AFIO_AF_0,ENABLE);	//PD6 RX0 会影响PA1！详情就见文档
+        GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_5, AFIO_AF_0,ENABLE);	    //PD5 TX0
+        // GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_6, AFIO_AF_0,ENABLE);	//PD6 RX0 会影响PA1！详情就见文档？
     }
 
 }
@@ -352,7 +352,7 @@ void UART_Driver(void)
 }
 
 // 串口发送字符串函数
-void UART1_SendString(const char* str)
+void UART_SendString(const char* str)
 {
     while (*str)
     {
@@ -384,7 +384,7 @@ void ADC_Driver(void)
 	ADC_InitStruct.ADC_TimerTriggerSource=ADC_TimerTriggerSource_TIM1ADC;//定时源触发选择TIM0事件
 	ADC_InitStruct.ADC_Align = ADC_Align_Left;					//左对齐
 	ADC_InitStruct.ADC_Channel = ADC_Channel_1;
-	ADC_InitStruct.ADC_BGVoltage = ADC_BGVoltage_BG1v2;//BGS电压1.2v
+	// ADC_InitStruct.ADC_BGVoltage = ADC_BGVoltage_BG1v2;//BGS电压1.2v
 	ADC_InitStruct.ADC_ReferencePositive = ADC_ReferencePositive_VDD;
 	// ADC_BGCRSetBGNC(ADC);// SET ADC_BGNC BIT
     
@@ -394,8 +394,8 @@ void ADC_Driver(void)
 
     // ★ 扫描序列：序号0=PA1(ADC1)【电压表、欧姆表输入端】，序号1PD2电流表输入端，序号2=PC4(ADC7)【电池】
     ADC_ScanChannelConfig(ADC, ADC_CH_VOLT_OHM, 0); // PA1
-    ADC_ScanChannelConfig(ADC, ADC_CH_AMP,  1); // PD2
-    ADC_ScanChannelConfig(ADC, ADC_CH_BATT, 2); // PC4
+    ADC_ScanChannelConfig(ADC, ADC_CH_AMP,  1);     // PD2
+    ADC_ScanChannelConfig(ADC, ADC_CH_BATT, 2);     // PC4
     ADC_ScanChannelNumberConfig(ADC, 3);
     ADC_ScanCmd(ADC, ENABLE);
 
@@ -715,7 +715,7 @@ static void LCD_DISPLAY_UPDATE(void)
     {
     case METER_MODE_VOLT:
         if ( g_volt.last_v > 0.0f) {
-            scaled = (uint16_t)(g_volt.last_v * 100.0f);
+            scaled = (uint32_t)(g_volt.last_v * 100.0f+0.5f);
             if (g_volt.last_v >= VOLT_MAX_V)
             {
                 // 显示溢出
@@ -758,7 +758,7 @@ static void LCD_DISPLAY_UPDATE(void)
             {
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_AMP_MA;
             }
-            scaled = (uint16_t)(i * 1000.0f + 0.5f);
+            scaled = (uint32_t)(i * 1000.0f + 0.5f);
         }
         break;
     case METER_MODE_OHM:
@@ -851,8 +851,8 @@ static void LCD_DISPLAY_UPDATE(void)
     g_lcd_buf.dotpos = dotpos;
     g_lcd_buf.num4 = (uint16_t)scaled;
     // 更新四位数字和小数点位置
-    LCD_Show_digits(g_lcd_buf.num4, g_lcd_buf.dotpos);
-    LCD_ShowIcon(g_lcd_buf.mA_overf_neg_A_V_O_kO, g_lcd_buf.bat_25_50_75_100_MO);
+    // LCD_Show_digits(g_lcd_buf.num4, g_lcd_buf.dotpos);
+    // LCD_ShowIcon(g_lcd_buf.mA_overf_neg_A_V_O_kO, g_lcd_buf.bat_25_50_75_100_MO);
 }
 
 // 配置三个输入IO口和电池电压输入
@@ -888,25 +888,13 @@ static void MeterADC_GPIO_Init(void)
     gi.GPIO_Pin  = GPIO_Pin_4;
     GPIO_Init(GPIOD, &gi);
 
-    // 关闭模拟功能
+    // // 关闭模拟功能
     GPIO_AnalogRemapConfig(AFIOD, GPIO_Pin_3, DISABLE);
     GPIO_AnalogRemapConfig(AFIOD, GPIO_Pin_4, DISABLE);
 
     // 关闭数字外设复用
-    GPIO_DigitalRemapConfig(
-        AFIOD,
-        GPIO_Pin_3,
-        AFIO_AF_None,
-        DISABLE
-    );
-
-    GPIO_DigitalRemapConfig(
-        AFIOD,
-        GPIO_Pin_4,
-        AFIO_AF_None,
-        DISABLE
-    );
-
+    GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_3, AFIO_AF_1, DISABLE);
+    GPIO_DigitalRemapConfig(AFIOD, GPIO_Pin_4, AFIO_AF_1, DISABLE);
 }
 
 #pragma endregion
@@ -1311,12 +1299,12 @@ void OhmTask_Init(void)
 
     OhmCtrl_GPIO_Init();
     
-    g_ohm.range = RANGE_MOHM;
+    g_ohm.range = RANGE_KOHM;
     g_ohm.st = OHM_S_SELECT_RANGE;   // ← 补上这行
     set_range_pins(g_ohm.range);
-    LOGS("Ohm init MΩ\r\n");
-    // 测试代码：锁定在k欧档测试一下510和51k
-    g_ohm.st = OHM_S_MEASURE;
+    LOGS("Ohm init kΩ\r\n");
+    // 测试代码？锁定在k欧档测试一下510和51k
+    // g_ohm.st = OHM_S_MEASURE;
 
     // 重置LCD刷新的计时器，防止初始化时刷新屏幕
     g_lcd_buf.last_update_ms = g_volt.next_ms + VOLT_SAMPLE_PERIOD_MS;
@@ -1350,7 +1338,7 @@ void OhmTask_Update(void)
     g_volt.next_ms = now;
 
     // 档位选择
-    if (g_ohm.st == OHM_S_SELECT_RANGE && false) {
+    if (g_ohm.st == OHM_S_SELECT_RANGE) {
         if (g_ohm.range != RANGE_KOHM)
         {
             g_ohm.range = RANGE_KOHM;
@@ -1399,36 +1387,36 @@ void OhmTask_Update(void)
 
         float rx = compute_rx_by_range(g_ohm.range, g_ohm.raw);
         // M欧档退回千欧档、欧姆档切到千欧档、千欧档切到兆欧和欧姆档的逻辑
-        // switch (g_ohm.range)
-        // {
-        //     case RANGE_OHM:
-        //         // 510Ω实测ADC约3669，超过3700重新选档
-        //         if (g_ohm.raw > OHM_TO_SELECT_RAW)
-        //         {
-        //             g_ohm.st = OHM_S_SELECT_RANGE;
-        //         }
-        //         break;
+        switch (g_ohm.range)
+        {
+            case RANGE_OHM:
+                // 510Ω实测ADC约3669，超过3700重新选档
+                if (g_ohm.raw > OHM_TO_SELECT_RAW)
+                {
+                    g_ohm.st = OHM_S_SELECT_RANGE;
+                }
+                break;
 
-        //     case RANGE_KOHM:
-        //         if (g_ohm.raw < KOHM_TO_OHM_RAW ||
-        //             g_ohm.raw > KOHM_TO_MOHM_RAW)
-        //         {
-        //             g_ohm.st = OHM_S_SELECT_RANGE;
-        //         }
-        //         break;
+            case RANGE_KOHM:
+                if (g_ohm.raw < KOHM_TO_OHM_RAW ||
+                    g_ohm.raw > KOHM_TO_MOHM_RAW)
+                {
+                    g_ohm.st = OHM_S_SELECT_RANGE;
+                }
+                break;
 
-        //     case RANGE_MOHM:
-        //         // 51kΩ在M档约ADC420
-        //         // 低于300说明应回kΩ档重新判断
-        //         if (g_ohm.raw < MOHM_TO_SELECT_RAW)
-        //         {
-        //             g_ohm.st = OHM_S_SELECT_RANGE;
-        //         }
-        //         break;
+            case RANGE_MOHM:
+                // 51kΩ在M档约ADC420
+                // 低于300说明应回kΩ档重新判断
+                if (g_ohm.raw < MOHM_TO_SELECT_RAW)
+                {
+                    g_ohm.st = OHM_S_SELECT_RANGE;
+                }
+                break;
 
-        //     default:
-        //         break;
-        // }
+            default:
+                break;
+        }
 
         if (g_ohm.st == OHM_S_SELECT_RANGE)
         {
@@ -1556,33 +1544,24 @@ Vin = Vpa1 × 4.4
 反向电压：不测量，不显示负数
 
 欧姆表
-欧姆表短路零点：PA1 ≈ 0.20V
-Ω档最小有效分辨范围：粗略估计 5Ω~10Ω 以上才有意义
-Ω档短路判断阈值：PA1 ≤ 0.23V 可先视为 0Ω/短路
-
 短路需要交给 Ω 档判断。
 开路/高阻需要交给 MΩ 档判断。
 旧的 3.0V/5.049k 理想公式不适合，需要按实测零点和等效内阻标定。
-
-Ω档参考电阻：约 51Ω
-Ω档有效公式：Rx = 51 × V / (3.0 - V)
-100Ω 实测：PA1≈1.96V，计算≈96Ω，基本通过
-短路零点：PA1≈0.20~0.29V，等效约 4~6Ω，需要做短路阈值
-开路：PA1≈2.8V，接近上限，应切到 kΩ档
-
 */
 
 int main (void)
 {
     first_init();
-    
     #if ENABLE_LOG
-        // uart0_tx 串口日志 PD5 uart1_tx 串口日志 PB1
+        // uart0_tx 串口日志 PD5 、uart1_tx 串口日志 PB1
         UART_Driver();
         LOGS("UART Init");
     #endif
-    // 单独测试 IO 引脚
+    // LCDInit();
+    // LCD_ShowNumber4(9876);
+    // while (1);
 #if 0
+    // 单独测试
     GPIO_InitTypeDef gi;
 
     // PA2 控制 Ω档
@@ -1689,8 +1668,10 @@ int main (void)
         delay_ms(1000);
     }
 #endif
+
     // 开机立刻休眠
     // deep_sleep();
+
     for (;;)
     {
         if (g_run_mode == RUN_MODE_NORMALWORK)
