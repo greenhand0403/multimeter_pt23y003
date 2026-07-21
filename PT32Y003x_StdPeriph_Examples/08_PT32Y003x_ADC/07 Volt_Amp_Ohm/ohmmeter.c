@@ -25,7 +25,7 @@
 #define MOHM_SEL_PIN_NUM       GPIO_Pin_1
 
 extern volatile uint32_t s_ms_ticks;
-
+extern void LCD_DelayOneFrame(void);
 typedef struct
 {
     ohmmeter_state_t state;
@@ -61,9 +61,9 @@ static float Ohmmeter_ComputeOhm(uint16_t raw)
 
     float rx = 51.0f * raw / (4029.0f - raw);
     // 10Ω附近单独修正
-    if (rx < 30.0f)
+    if (rx < 10.0f)
     {
-        rx = rx * 0.290f + 3.68f;
+        // rx = rx * 0.291f + 3.69f;
     }
     else
     {
@@ -99,7 +99,7 @@ static float Ohmmeter_ComputeMOhm(uint16_t raw)
         return 0.0f;
     }
 
-    return 454700.0f * ((float)raw - 55.0f) / (3686.0f - (float)raw);
+    return 466000.0f * ((float)raw - 55.0f) / (3686.0f - (float)raw);
 }
 // 根据档位自动计算电阻值 
 static inline float compute_rx_by_range(ohmmeter_range_t range, uint16_t raw)
@@ -144,7 +144,7 @@ static void Ohmmeter_SetRangePins(ohmmeter_range_t range)
         break;
     }
 
-    delay_ms(5);
+    delay_ms(10);
 }
 
 void Ohmmeter_Init(void)
@@ -185,13 +185,13 @@ void Ohmmeter_Update(void)
         {
             s_ohm.range = OHM_RANGE_OHM;
             Ohmmeter_SetRangePins(s_ohm.range);
-            // g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
+            LCD_DelayOneFrame();
         }
         else if (s_ohm.raw > KOHM_TO_MOHM_RAW)
         {
             s_ohm.range = OHM_RANGE_MOHM;
             Ohmmeter_SetRangePins(s_ohm.range);
-            // g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
+            LCD_DelayOneFrame();
         }
 
         s_ohm.state = OHMMETER_MEASURE;
@@ -237,7 +237,7 @@ void Ohmmeter_Update(void)
         if (s_ohm.state == OHMMETER_SELECT_RANGE)
         {
             // 换档时跳过中间状态的显示
-            // g_lcd_buf.last_update_ms = now + LCD_UPDATE_MS;
+            LCD_DelayOneFrame();
         }
         else
         {

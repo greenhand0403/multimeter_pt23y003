@@ -74,5 +74,4 @@ void UART_SendString(const char* str)
         while (UART_GetFlagStatus(LOG_UART, UART_FLAG_TXE) == RESET);
     }
 }
-
 #endif

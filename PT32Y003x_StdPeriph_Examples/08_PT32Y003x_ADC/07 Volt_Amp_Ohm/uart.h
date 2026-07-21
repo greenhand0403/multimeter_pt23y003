@@ -4,8 +4,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "PT32Y003x.h"
-
-#define ENABLE_LOG 1
+// 调试信息打印开关
+#define ENABLE_LOG 0
 
 #if ENABLE_LOG
 

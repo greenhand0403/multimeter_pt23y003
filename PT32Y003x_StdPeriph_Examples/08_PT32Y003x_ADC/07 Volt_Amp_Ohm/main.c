@@ -96,6 +96,7 @@ static struct {
 // ===== 功能函数声明 =====
 void first_init(void);
 void deep_sleep(void);
+void LCD_DelayOneFrame(void);
 
 // 空闲自动睡眠检测
 static inline void Idle_OnDisplaySample(float v, uint32_t now_ms)
@@ -280,8 +281,9 @@ void deep_sleep(void)
         PWM_Cmd(TIM1, DISABLE);
 
         HT1621_Clear();
-
+#if ENABLE_LOG
         LOGF("DEEPSLEEP ms_ticks=%u\r\n", s_ms_ticks);
+#endif
         // 等待PC5按键松开
         while (GPIO_ReadDataBit(GPIOC,GPIO_Pin_5)==0)
         {
@@ -315,9 +317,9 @@ void deep_sleep(void)
 #if ENABLE_LOG
         UART_Driver();
         UART_Cmd(LOG_UART, ENABLE);
-#endif
-        LOGF("WAKEUP ticks=%u\r\n",s_ms_ticks);
 
+        LOGF("WAKEUP ticks=%u\r\n",s_ms_ticks);
+#endif
         // 在唤醒后保持按住 2 秒回到工作态 若未长按 5s后重新睡眠 由TIM2中断服务程序修改系统运行状态
         while(g_run_mode == RUN_MODE_WAKEUP)
         {
@@ -332,8 +334,9 @@ void deep_sleep(void)
         }
 
         // idle_last_ms = s_ms_ticks;//重置变化率<10%的120s计数
-
+#if ENABLE_LOG
         LOGF("NORMALWORK ms_ticks=%u\r\n",s_ms_ticks);
+#endif
 
         // 返回正常工作，清除标志位，此时需要再次调用万用表外设配置函数
         hadSetMultimeterInit = false;
@@ -364,7 +367,10 @@ void LCDInit(void)
     
     HT1621_Init();
 }
-
+void LCD_DelayOneFrame(void)
+{
+    g_lcd_buf.last_update_ms = s_ms_ticks + LCD_UPDATE_MS;
+}
 static void LCD_DISPLAY_UPDATE(void)
 {
     // 1宏定义了 200ms 更新屏幕
@@ -559,8 +565,9 @@ void BatteryTask_Update(void)
     float v = 2 * MeterADC_RawToVoltage(g_adc_pc4_raw);
 
     int lvl = Battery_LevelFromV(v);
-    
+#if ENABLE_LOG
     // LOGF("BATT: %dV [%d/4]\r\n", (int)(v*1000.0f+0.5f), lvl);
+#endif
 
     g_batt.level = lvl;
 }
@@ -631,13 +638,15 @@ void TaskInit(void)
     BatteryTask_Init();
     Multimeter_Init();
     Multimeter_SetMode(Multimeter_GetMode());
-    // 固定显示符号 V
-    g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_VOLT<<4;
+    if (Multimeter_GetMode()==METER_MODE_VOLT)
+    {
+        g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_VOLT<<4;
+    }
     hadSetMultimeterInit = true;
     // 短按提示音
-    // PWM_Cmd(TIM1, ENABLE);
-    // delay_ms(25);
-    // PWM_Cmd(TIM1, DISABLE);
+    PWM_Cmd(TIM1, ENABLE);
+    delay_ms(25);
+    PWM_Cmd(TIM1, DISABLE);
 }
 int main(void)
 {
@@ -672,7 +681,6 @@ int main(void)
                 // 清LCD 图标缓冲，避免残留
                 g_lcd_buf.mA_overf_neg_A_V_O_kO = 0;
                 g_lcd_buf.bat_25_50_75_100_MO &= ICON_BAT_BROAD;
-                // 出于性能优化的考虑，只有切到电压表，就在初始化时设置V的符号即可，其他表因为涉及大单位时换档，符号需在更新时计算显示
                 if (Multimeter_GetMode()==METER_MODE_VOLT)
                 {
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_VOLT<<4;
