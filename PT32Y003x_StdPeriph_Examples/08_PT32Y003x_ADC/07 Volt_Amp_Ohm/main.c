@@ -491,18 +491,31 @@ static void LCD_DISPLAY_UPDATE(void)
                 g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OHM_KO<<4;   // kΩ
 
             } else {
-                // 1.00M ~ 51.00M
+                // 1.00MΩ以上
                 float v_M = rx / 1000000.0f;
-                if (v_M >= 51.00f) {
-                    v_M = 51.00f;
-                    g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
-                    dotpos = 4;
-                }else
+            
+                if (rx >= MOHM_MAX_RESISTANCE)
                 {
+                    /*
+                     * 达到最大可测电阻：
+                     * 设置超量程，LCD显示----
+                     */
+                    g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_OVERF;
+            
+                    /*
+                     * 数字内容已经没有实际意义。
+                     * 清零，最终由OVERF段显示四条横线。
+                     */
+                    scaled = 0;
+                    dotpos = 0;
+                }
+                else
+                {
+                    scaled = (uint32_t)(v_M * 100.0f + 0.5f);
                     dotpos = 2;
                 }
-                scaled = (uint32_t)(v_M * 100.0f + 0.5f); // xx.xx
-                g_lcd_buf.bat_25_50_75_100_MO |= ICON_OHM_MO<<4;     // MΩ（在第二字节）
+            
+                g_lcd_buf.bat_25_50_75_100_MO |= ICON_OHM_MO << 4;
             }
         }
         break;

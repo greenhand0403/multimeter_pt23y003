@@ -10,11 +10,10 @@
 #include "PT32Y003x.h"
 #include <PT32Y003x_gpio.h>
 #include "delay.h"
+#include "uart.h"
 
 #define OHM_SAMPLE_PERIOD_MS   300U
 #define OHM_AVG_SAMPLES        5U
-
-#define OHM_OPEN_VALUE         51000000.0f
 
 #define KOHM_TO_OHM_RAW        430U
 #define KOHM_TO_MOHM_RAW       3850U
@@ -56,7 +55,7 @@ static float Ohmmeter_ComputeOhm(uint16_t raw)
 
     if (raw >= 3950U)
     {
-        return OHM_OPEN_VALUE;
+        return MOHM_MAX_RESISTANCE;
     }
 
     float rx = 51.0f * raw / (4029.0f - raw);
@@ -77,7 +76,7 @@ static float Ohmmeter_ComputeKOhm(uint16_t raw)
 {
     if (raw >= 4000U)
     {
-        return OHM_OPEN_VALUE;
+        return MOHM_MAX_RESISTANCE;
     }
 
     if (raw <= 37U)
@@ -89,17 +88,21 @@ static float Ohmmeter_ComputeKOhm(uint16_t raw)
 }
 static float Ohmmeter_ComputeMOhm(uint16_t raw)
 {
-    if (raw >= 3500U)
-    {
-        return OHM_OPEN_VALUE;
-    }
-
-    if (raw <= 55U)
+    if (raw <= (uint16_t)MOHM_RAW_ZERO)
     {
         return 0.0f;
     }
 
-    return 466000.0f * ((float)raw - 55.0f) / (3686.0f - (float)raw);
+    /*
+     * 开路或超出兆欧档有效范围：
+     * 返回最大可测电阻，让LCD统一显示----
+     */
+    if (raw >= MOHM_OPEN_RAW)
+    {
+        return MOHM_MAX_RESISTANCE;
+    }
+
+    return MOHM_BASE_RESISTANCE * ((float)raw - MOHM_RAW_ZERO) / (MOHM_RAW_FULL - (float)raw);
 }
 // 根据档位自动计算电阻值 
 static inline float compute_rx_by_range(ohmmeter_range_t range, uint16_t raw)
@@ -155,7 +158,7 @@ void Ohmmeter_Init(void)
 
     s_ohm.raw = 0;
     s_ohm.adc_voltage = 0.0f;
-    s_ohm.resistance = OHM_OPEN_VALUE;
+    s_ohm.resistance = MOHM_MAX_RESISTANCE;
 
     Ohmmeter_SetRangePins(OHM_RANGE_KOHM);
     // 重置LCD刷新的计时器，防止初始化时刷新屏幕
@@ -198,6 +201,9 @@ void Ohmmeter_Update(void)
         
     } else {
         s_ohm.raw = MeterADC_ReadPA1(OHM_AVG_SAMPLES);
+#if ENABLE_LOG
+        LOGF("OHM PA1 raw=%u\r\n", s_ohm.raw);
+#endif
         // 用这个公式的话就是锁死 3V 参考电压去换算
         s_ohm.adc_voltage = MeterADC_RawToVoltage(s_ohm.raw);
 

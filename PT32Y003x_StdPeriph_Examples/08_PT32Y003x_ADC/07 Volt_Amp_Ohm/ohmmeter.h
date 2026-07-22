@@ -3,6 +3,20 @@
 
 #include <stdint.h>
 
+/* 兆欧档开路ADC门限：实测开路约3633，留一定裕量 */
+#define MOHM_OPEN_RAW          3500U
+
+/* 兆欧档公式参数 */
+#define MOHM_RAW_ZERO          55.0f
+#define MOHM_RAW_FULL          3686.0f
+#define MOHM_BASE_RESISTANCE   466000.0f
+
+/*
+ * 由开路ADC门限换算出来的最大可测电阻。
+ * 约为8.63MΩ。
+ */
+#define MOHM_MAX_RESISTANCE    (MOHM_BASE_RESISTANCE * ((float)MOHM_OPEN_RAW - MOHM_RAW_ZERO) / (MOHM_RAW_FULL - (float)MOHM_OPEN_RAW))
+
 typedef enum
 {
     OHM_RANGE_OHM = 0,
