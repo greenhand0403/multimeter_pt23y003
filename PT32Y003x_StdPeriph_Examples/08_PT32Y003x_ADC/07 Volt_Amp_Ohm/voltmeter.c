@@ -4,6 +4,7 @@
 //     VoltTask_Update
 #include "voltmeter.h"
 #include "meter_adc.h"
+#include "uart.h"
 
 #include "delay.h"
 
@@ -40,6 +41,16 @@ void Voltmeter_Update(void)
 
     uint16_t raw = MeterADC_ReadPA1(VOLT_AVG_SAMPLES);
 
+    // 当前正常正向测量只使用0～4095范围；
+    // 反接时会出现约8190的异常码，按无效输入归零
+    // if (raw > 4095U)
+    // {
+    //     raw = 0U;
+    // }
+
+#if ENABLE_LOG
+    LOGF("VOLT PA1 raw=%u\r\n", raw);
+#endif
     float adc_v = MeterADC_RawToVoltage(raw);
     // 根据分压公式，将 PA1 读到的电压值转换为电压表测量节点的电压
     float measured = adc_v * K_VOLT_SLOPE;

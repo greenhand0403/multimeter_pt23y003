@@ -7,6 +7,7 @@
 #include "PT32Y003x.h"
 #include <PT32Y003x_gpio.h>
 #include <PT32Y003x_adc.h>
+#include "uart.h"
 
 #define ADC_CH_VOLT_OHM  ADC_Channel_1
 #define ADC_CH_AMP       ADC_Channel_6
@@ -122,11 +123,16 @@ static void MeterADC_ScanOnce(void)
     {
     }
 
-    s_adc_pa1_raw =
-        (uint16_t)(ADC_GetScanData(
-            ADC,
-            ADC_ScanChannel_0
-        ) >> 3);
+    int16_t pa1_data = (int16_t)ADC_GetScanData(ADC, ADC_ScanChannel_0);
+
+    if (pa1_data <= 0)
+    {
+        s_adc_pa1_raw = 0;
+    }
+    else
+    {
+        s_adc_pa1_raw = (uint16_t)(pa1_data >> 3);
+    }
 
     s_adc_pd2_raw =
         (uint16_t)(ADC_GetScanData(

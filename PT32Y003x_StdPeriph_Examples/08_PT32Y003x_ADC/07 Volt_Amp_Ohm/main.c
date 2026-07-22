@@ -685,6 +685,8 @@ int main(void)
                 {
                     g_lcd_buf.mA_overf_neg_A_V_O_kO |= ICON_VOLT<<4;
                 }
+                // 切换万用表类型后，清空空闲检测器，重新累计120秒空闲休眠
+                memset((void*)&g_idle, 0, sizeof(g_idle));
                 // 切换万用表类型的短按提示音
                 PWM_Cmd(TIM1, ENABLE);
                 delay_ms(25);
