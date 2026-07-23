@@ -506,8 +506,10 @@ static void LCD_DISPLAY_UPDATE(void)
                      * 数字内容已经没有实际意义。
                      * 清零，最终由OVERF段显示四条横线。
                      */
-                    scaled = 0;
-                    dotpos = 0;
+                    v_M = MOHM_MAX_RESISTANCE;
+                    scaled = v_M;
+                    // LCD库里面是靠这个变量去判断显示 ---- 的
+                    dotpos = 4;
                 }
                 else
                 {
