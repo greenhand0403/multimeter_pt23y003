@@ -262,7 +262,7 @@ static inline void deep_sleep_close_gpio(void)
     // 关闭GPIO 只保留 PC5
     GPIO_InitTypeDef GPIO_InitStructure;
     GPIO_InitStructure.GPIO_Pin = GPIO_Pin_All;	
-    GPIO_InitStructure.GPIO_Mode=GPIO_Mode_In;	
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_In;	
     GPIO_InitStructure.GPIO_Pull = GPIO_Pull_Down;
     GPIO_Init(GPIOA, &GPIO_InitStructure);
     GPIO_Init(GPIOB, &GPIO_InitStructure);
