@@ -15,10 +15,10 @@
 #define OHM_SAMPLE_PERIOD_MS   300U
 #define OHM_AVG_SAMPLES        5U
 
-#define KOHM_TO_OHM_RAW        410U
-#define KOHM_TO_MOHM_RAW       3680U
-#define OHM_TO_SELECT_RAW      3700U    //欧姆档去到千欧档选档
-#define MOHM_TO_SELECT_RAW     445U     //兆欧档去到千姆档选档 
+#define KOHM_TO_OHM_RAW        390U
+#define KOHM_TO_MOHM_RAW       3640U
+#define OHM_TO_SELECT_RAW      3140U    //欧姆档去到千欧档选档
+#define MOHM_TO_SELECT_RAW     410U     //兆欧档去到千姆档选档 
 
 #define MOHM_SEL_PIN_PORT      GPIOB
 #define MOHM_SEL_PIN_NUM       GPIO_Pin_1
@@ -47,55 +47,43 @@ static void Ohmmeter_SetRangePins(ohmmeter_range_t range);
 
 static float Ohmmeter_ComputeOhm(uint16_t raw)
 {
-    float rx;
+    float r;
+    float x = (float)raw;
 
     /*
-     * 短路实测raw约195；
-     * 10Ω已经约970，因此300以下可安全视为短路。
+     * 实测短路约79。
+     * 适当留裕量，85以下直接按短路处理。
      */
-    if (raw < 300U)
+    if (raw <= 85U)
     {
         return 0.0f;
     }
 
     /*
-     * Ω档高端超出有效范围，交给kΩ档处理。
-     * 正常自动换挡通常会先于这里触发。
+     * 低阻区：约0～10Ω。
+     * 10Ω实测raw约376。
      */
-    if (raw >= 3950U)
+    if (raw < 376U)
+    {
+        r = -0.0000420052f * x * x + 0.0524152f * x - 3.77394f;
+
+        if (r < 0.0f)
+        {
+            r = 0.0f;
+        }
+
+        return r;
+    }
+
+    /*
+     * 10～560Ω使用分压型拟合公式。
+     */
+    if (x >= OHM_RAW_OPEN)
     {
         return MOHM_MAX_RESISTANCE;
     }
 
-    /*
-     * 低阻区：
-     * 10Ω raw≈970
-     * 33Ω raw≈1680
-     * 50Ω raw≈2059
-     *
-     * 使用带ADC零点偏移的拟合公式。
-     */
-    if (raw < 2100U)
-    {
-        rx = OHM_SCALE * ((float)raw - OHM_RAW_ZERO) / (OHM_RAW_OPEN - (float)raw);
-
-        if (rx < 0.0f)
-        {
-            rx = 0.0f;
-        }
-
-        return rx;
-    }
-
-    /*
-     * 中高阻区：
-     * 原分压公式乘0.965后，在50～600Ω范围更准确。
-     */
-    rx = 51.0f * (float)raw / (4029.0f - (float)raw);
-
-    rx *= 0.965f;
-
-    return rx;
+    return OHM_SCALE * (x - OHM_RAW_ZERO) / (OHM_RAW_OPEN - x);
 }
 static float Ohmmeter_ComputeKOhm(uint16_t raw)
 {
@@ -224,12 +212,13 @@ void Ohmmeter_Update(void)
     } else {
         s_ohm.raw = MeterADC_ReadPA1(OHM_AVG_SAMPLES);
 #if ENABLE_LOG
-        LOGF("OHM PA1 raw=%u\r\n", s_ohm.raw);
+        LOGF("OHM range=%d PA1 raw=%u\r\n", s_ohm.range, s_ohm.raw);
 #endif
         // 用这个公式的话就是锁死 3V 参考电压去换算
         s_ohm.adc_voltage = MeterADC_RawToVoltage(s_ohm.raw);
 
         float rx = compute_rx_by_range(s_ohm.range, s_ohm.raw);
+#if 1
         // M欧档退回千欧档、欧姆档切到千欧档、千欧档切到兆欧和欧姆档的逻辑
         switch (s_ohm.range)
         {
@@ -261,7 +250,7 @@ void Ohmmeter_Update(void)
             default:
                 break;
         }
-
+#endif
         if (s_ohm.state == OHMMETER_SELECT_RANGE)
         {
             // 换档时跳过中间状态的显示

@@ -3,21 +3,21 @@
 
 #include <stdint.h>
 
-/* 1M中间电阻时，兆欧档开路ADC门限：实测开路约2699，留一定裕量 */
-#define MOHM_OPEN_RAW          2600U
+/* 1M中间电阻时，兆欧档开路ADC门限：实测开路约2600，留一定裕量 */
+#define MOHM_OPEN_RAW          2550U
 
 /* 欧姆档公式参数 */
-#define OHM_SCALE       61.84f
-#define OHM_RAW_ZERO    462.14f
-#define OHM_RAW_OPEN    4069.06f
+#define OHM_SCALE       156.46f
+#define OHM_RAW_ZERO    143.21f
+#define OHM_RAW_OPEN   4017.91f
 /* 千欧档公式参数 */
-#define KOHM_SCALE       4893.8f
-#define KOHM_RAW_ZERO    38.7f
-#define KOHM_RAW_OPEN    4013.0f
+#define KOHM_SCALE       5117.2f
+#define KOHM_RAW_ZERO      22.65f
+#define KOHM_RAW_OPEN    3975.35f
 /* 兆欧档公式参数 */
-#define MOHM_SCALE       327200.0f
-#define MOHM_RAW_ZERO    68.5f
-#define MOHM_RAW_OPEN    2698.1f
+#define MOHM_SCALE       320100.0f
+#define MOHM_RAW_ZERO        23.7f
+#define MOHM_RAW_OPEN      2655.5f
 
 /*
  * 由开路ADC门限换算出来的最大可测电阻。
