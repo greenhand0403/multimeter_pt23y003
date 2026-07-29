@@ -15,10 +15,10 @@
 #define OHM_SAMPLE_PERIOD_MS   300U
 #define OHM_AVG_SAMPLES        5U
 
-#define KOHM_TO_OHM_RAW        390U
-#define KOHM_TO_MOHM_RAW       3640U
-#define OHM_TO_SELECT_RAW      3140U    //欧姆档去到千欧档选档
-#define MOHM_TO_SELECT_RAW     410U     //兆欧档去到千姆档选档 
+#define KOHM_TO_OHM_RAW        400U
+#define KOHM_TO_MOHM_RAW       3630U
+#define OHM_TO_SELECT_RAW      3370U    //欧姆档去到千欧档选档
+#define MOHM_TO_SELECT_RAW     420U     //兆欧档去到千姆档选档 
 
 #define MOHM_SEL_PIN_PORT      GPIOB
 #define MOHM_SEL_PIN_NUM       GPIO_Pin_1
@@ -50,22 +50,19 @@ static float Ohmmeter_ComputeOhm(uint16_t raw)
     float r;
     float x = (float)raw;
 
-    /*
-     * 实测短路约79。
-     * 适当留裕量，85以下直接按短路处理。
-     */
-    if (raw <= 85U)
+    // 短路
+    if(raw <= 120U)
     {
         return 0.0f;
     }
 
     /*
      * 低阻区：约0～10Ω。
-     * 10Ω实测raw约376。
+     * 10Ω实测raw约513。
      */
-    if (raw < 376U)
+    if (raw <= 520U)
     {
-        r = -0.0000420052f * x * x + 0.0524152f * x - 3.77394f;
+        r = -0.0000138f*x*x +0.0364f*x -3.54f;
 
         if (r < 0.0f)
         {
@@ -76,7 +73,7 @@ static float Ohmmeter_ComputeOhm(uint16_t raw)
     }
 
     /*
-     * 10～560Ω使用分压型拟合公式。
+     * 10～500Ω使用分压型拟合公式。
      */
     if (x >= OHM_RAW_OPEN)
     {
@@ -161,9 +158,12 @@ static void Ohmmeter_SetRangePins(ohmmeter_range_t range)
 
 void Ohmmeter_Init(void)
 {
-    s_ohm.range = OHM_RANGE_KOHM;
+    s_ohm.range = OHM_RANGE_OHM;
+#ifdef ENABLE_LOG
+    s_ohm.state = OHMMETER_MEASURE;
+#else
     s_ohm.state = OHMMETER_SELECT_RANGE;
-    // s_ohm.state = OHMMETER_MEASURE;
+#endif
     s_ohm.next_ms = s_ms_ticks;
 
     s_ohm.raw = 0;
@@ -218,7 +218,8 @@ void Ohmmeter_Update(void)
         s_ohm.adc_voltage = MeterADC_RawToVoltage(s_ohm.raw);
 
         float rx = compute_rx_by_range(s_ohm.range, s_ohm.raw);
-#if 1
+#if ENABLE_LOG
+#else
         // M欧档退回千欧档、欧姆档切到千欧档、千欧档切到兆欧和欧姆档的逻辑
         switch (s_ohm.range)
         {
@@ -308,36 +309,53 @@ ohmmeter_state_t Ohmmeter_GetState(void)
     return s_ohm.state;
 }
 /*
+硬件又改了一版，这几项需要重新测试其原始的ADC值，请你根据测试结果调整代码参数，为了避免反复切换的档位，我认为换挡阈值不能留太大的余留空间。本身ADC的读数差异基本上不会超过5个单位
+修改代码时，换挡逻辑也优化一下吧，500Ω及以下用欧姆档，500Ω~50kΩ含50k用千欧档，超过50k用兆欧档
+
+测试结果如下，都是固定档位去测试并且禁用了换挡功能：
+
+开机A板电压表ADC=27，电流表ADC=16，欧姆表欧姆档ADC=3987
+开机A板电压表ADC=30，电流表ADC=8189，欧姆表欧姆档ADC=3990
+
+数据格式：
+待测电阻  A板ADC原始值 B板ADC原始值
+
 欧姆档
-实际值	公式值	误差
-10Ω	10.13Ω	+1.34%
-33Ω	31.52Ω	?4.47%
-50Ω	49.13Ω	?1.74%
-99Ω	100.97Ω	+1.99%
-200Ω	205.59Ω	+2.80%
-300Ω	304.99Ω	+1.66%
-516Ω	512.96Ω	?0.59%
-591Ω	582.72Ω	?1.40%
+短路=113=120
+1Ω=136=143
+5Ω=250=259
+10Ω=502=513
+50Ω=1410=1412
+100Ω=2073=2074
+200Ω=2705
+300Ω=3032
+500Ω=3346=3348
+600Ω=3440=3442
+开路=3987=3990
 
 千欧档
-实际值	公式值	误差
-517Ω	517.8Ω	+0.16%
-981Ω	976.8Ω	?0.43%
-5.1kΩ	5.142kΩ	+0.82%
-19.6kΩ	19.509kΩ	?0.46%
-29.6kΩ	29.468kΩ	?0.45%
-51.2kΩ	51.316kΩ	+0.23%
-56.2kΩ	56.265kΩ	+0.12%
+短路=76=79
+500Ω=376=374
+600Ω=437=434
+1k=670=658
+2k=1137=1137
+5.1k=1989=1989
+10k=2630=2630
+30k=3397=3397
+50k=3604=3610
+60k=3660=3667
+开路=3971=3972
 
 兆欧档
-实际值	公式值	误差
-51.0kΩ	50.82kΩ	?0.36%
-58.3kΩ	58.27kΩ	?0.05%
-68.8kΩ	68.73kΩ	?0.10%
-97.9kΩ	98.93kΩ	+1.05%
-200.7kΩ	200.30kΩ	?0.20%
-1.01MΩ	1.002MΩ	?0.75%
-2MΩ	2.017MΩ	+0.83%
-4MΩ	3.951MΩ	?1.22%
-5.01MΩ	5.047MΩ	+0.74%
+短路=75=79
+50k=394=393
+60k=450=450
+100k=679=676
+300k=1296=1295
+500k=1626=1624
+1M=2019=2016
+3M=2403=2398
+5M=2497=2495
+开路=2657=2653
+
 */

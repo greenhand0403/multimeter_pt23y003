@@ -4,6 +4,7 @@
 //     AmpTask_Update#include "ammeter.h"
 #include "meter_adc.h"
 #include "ammeter.h"
+#include "uart.h"
 
 extern volatile uint32_t s_ms_ticks;
 
@@ -40,7 +41,9 @@ void Ammeter_Update(void)
     s_amp.next_ms = now;
 
     uint16_t raw = MeterADC_ReadPD2(AMP_AVG_SAMPLES);
-
+#if ENABLE_LOG
+    LOGF("AMP PD2 raw=%u\r\n", raw);
+#endif
     float adc_v = MeterADC_RawToVoltage(raw);
 
     s_amp.raw = raw;

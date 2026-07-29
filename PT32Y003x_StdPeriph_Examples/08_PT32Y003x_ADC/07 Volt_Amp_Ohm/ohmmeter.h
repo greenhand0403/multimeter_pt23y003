@@ -6,10 +6,10 @@
 /* 1M中间电阻时，兆欧档开路ADC门限：实测开路约2600，留一定裕量 */
 #define MOHM_OPEN_RAW          2550U
 
-/* 欧姆档公式参数 */
-#define OHM_SCALE       156.46f
-#define OHM_RAW_ZERO    143.21f
-#define OHM_RAW_OPEN   4017.91f
+/* 欧姆档公式参数（100Ω采样电阻版本） */
+#define OHM_SCALE       97.98f
+#define OHM_RAW_ZERO   105.32f
+#define OHM_RAW_OPEN 3983.59f
 /* 千欧档公式参数 */
 #define KOHM_SCALE       5117.2f
 #define KOHM_RAW_ZERO      22.65f
